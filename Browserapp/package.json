@@ -1,0 +1,59 @@
+{
+  "name": "aibrowser",
+  "productName": "AiBrowser",
+  "version": "1.0.2",
+  "description": "AiBrowser\uff1a\u672c\u5730\u6d4f\u89c8\u5668\u73af\u5883\u3001\u6269\u5c55\u4e0e\u7a97\u53e3\u540c\u6b65\u7ba1\u7406\u5668",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/run-app.js",
+    "selftest": "node environment-audit-selftest.js",
+    "selftest:automation": "node automation/automation-selftest.js",
+    "selftest:proxy-subscription": "node automation/proxy-subscription-selftest.js",
+    "selftest:protocol": "node automation/protocol/protocol-selftest.js",
+    "selftest:isolation": "node automation/isolation-fingerprint-selftest.js",
+    "selftest:kernel": "node automation/kernel-policy-selftest.js",
+    "selftest:startup": "node browser-startup-diagnostic-selftest.js",
+    "selftest:rpa-wayfern": "node rpa-wayfern-compat-selftest.js",
+    "selftest:rpa-marketplace": "node rpa-marketplace-flow-selftest.js",
+    "selftest:cloud": "node automation/cloud-sync-security-selftest.js",
+    "log:startup": "node scripts/read-startup-log.js",
+    "log:fingerprint": "node scripts/read-fp-log.js",
+    "log:rpa": "node scripts/read-rpa-log.js",
+    "patch:windows-kernel": "node scripts/patch-windows-kernel.js",
+    "prepare:bundled-kernel": "node scripts/patch-windows-kernel.js && node scripts/prepare-bundled-kernel.js",
+    "build:native": "node scripts/build-native.js",
+    "selftest:native-secret": "node native-secret-store-selftest.js",
+    "package:portable": "node scripts/package-portable.js",
+    "selftest:theme": "node theme-nes-light-selftest.js",
+    "selftest:retro": "node theme-retro-desktop-selftest.js",
+    "selftest:themes": "node theme-nes-light-selftest.js && node theme-retro-desktop-selftest.js",
+    "selftest:portable": "node portable-paths-selftest.js",
+    "selftest:desktop-package-ui": "node desktop-packaging-ui-selftest.js",
+    "selftest:network-modes": "node network-mode-selftest.js",
+    "selftest:firefox-kernel": "node firefox-kernel-selftest.js",
+    "selftest:firefox-native-sync": "node firefox-native-sync-selftest.js",
+    "selftest:mixed-firefox-sync": "node mixed-firefox-sync-selftest.js",
+    "selftest:chromium-ime-sync": "node chromium-ime-sync-selftest.js",
+    "selftest:sync-console": "node sync-console-selftest.js",
+    "selftest:extension-storage": "node extension-storage-selftest.js",
+    "selftest:extension-marker": "node extension-marker-cleanliness-selftest.js",
+    "selftest:extension-multi-env": "node store-batch-four-selftest.js",
+    "selftest:ai": "node ai/ai-selftest.js",
+    "selftest:agent": "node ai/agent-selftest.js",
+    "selftest:ai-error": "node automation/local-api-ai-error-selftest.js"
+  },
+  "devDependencies": {
+    "desktop-shell": "npm:electron@43.1.1",
+    "rcedit": "5.0.2",
+    "@electron/asar": "4.2.1"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "exceljs": "^4.4.0",
+    "yaml": "^2.8.3"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
+  }
+}

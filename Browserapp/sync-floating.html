@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN" data-ui-theme="pixel-workstation" data-color-mode="dark">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AiBrowser 工具条</title>
+  <link rel="stylesheet" href="sync-floating.css">
+</head>
+<body>
+  <main class="floating-shell">
+    <header class="floating-bar">
+      <div class="floating-brand">
+        <img src="assets/logo-pixel.png" alt="">
+        <strong>Ai</strong>
+      </div>
+      <div class="sync-state" aria-live="polite">
+        <span class="status-dot" id="sync-status-dot"></span>
+        <span id="sync-status-title">读取环境中</span>
+      </div>
+      <button id="sync-targets" class="bar-button targets-button" type="button" aria-expanded="false">
+        <i data-lucide="list-checks"></i><span id="sync-targets-label">环境 0/0</span><i data-lucide="chevron-down" class="chevron"></i>
+      </button>
+      <button id="sync-restart" class="bar-button icon-button has-tip" type="button" aria-label="重启同步" data-tip="重启同步" disabled><i data-lucide="refresh-ccw"></i></button>
+      <button id="sync-toggle" class="bar-button icon-button primary" type="button" aria-label="开始操作同步" disabled><i data-lucide="play"></i></button>
+      <button id="floating-hide" class="bar-button icon-button" type="button" aria-label="关闭工具条"><i data-lucide="x"></i></button>
+    </header>
+
+    <section class="floating-drawer" id="floating-drawer" hidden>
+      <nav class="drawer-tabs" aria-label="同步工具">
+        <button class="active" type="button" data-panel="environments"><i data-lucide="list-checks"></i><span>环境</span></button>
+        <button type="button" data-panel="window"><i data-lucide="panels-top-left"></i><span>窗口</span></button>
+        <button type="button" data-panel="text"><i data-lucide="text-cursor-input"></i><span>文本</span></button>
+        <button type="button" data-panel="tabs"><i data-lucide="layers-2"></i><span>标签页</span></button>
+        <button id="sync-refresh" class="drawer-icon has-tip" type="button" aria-label="刷新环境" data-tip="刷新环境"><i data-lucide="rotate-cw"></i></button>
+        <button id="sync-open-manager" class="drawer-icon has-tip" type="button" aria-label="打开完整窗口同步" data-tip="打开完整窗口同步"><i data-lucide="external-link"></i></button>
+      </nav>
+
+      <section class="drawer-panel active" data-panel-body="environments">
+        <div class="selection-toolbar">
+          <div><strong>选择同步环境</strong><small>Chromium 作主控；Firefox 可参与网页和浏览器操作同步</small></div>
+          <span id="sync-selected-count">0 / 0</span>
+          <button id="sync-select-all" type="button">全选</button>
+          <button id="sync-clear" type="button">清除</button>
+        </div>
+        <div class="environment-list" id="sync-environment-list">
+          <div class="empty-state">暂无已打开的浏览器环境</div>
+        </div>
+      </section>
+
+      <section class="drawer-panel" data-panel-body="window">
+        <p class="panel-note">对已选环境执行窗口操作，支持 Chromium 和 Firefox。</p>
+        <div class="command-grid window-grid">
+          <button type="button" data-window-action="tile"><i data-lucide="layout-grid"></i><span>平铺</span></button>
+          <button type="button" id="floating-custom-layout"><i data-lucide="grid-3x3"></i><span>自定义布局</span></button>
+          <button type="button" data-window-action="cascade"><i data-lucide="layers-2"></i><span>层叠</span></button>
+          <button type="button" data-window-action="maximized"><i data-lucide="maximize-2"></i><span>最大化</span></button>
+          <button type="button" data-window-action="minimized"><i data-lucide="minus"></i><span>最小化</span></button>
+          <button type="button" data-window-action="normal"><i data-lucide="minimize-2"></i><span>恢复</span></button>
+        </div>
+        <section class="custom-layout-picker" id="custom-layout-picker" hidden>
+          <header class="custom-layout-heading">
+            <div><strong>自定义窗口布局</strong><small id="custom-layout-summary"></small></div>
+            <button type="button" id="custom-layout-close" aria-label="关闭自定义布局"><i data-lucide="x"></i></button>
+          </header>
+          <div class="custom-layout-sheet-wrap">
+            <div class="custom-layout-sheet" id="custom-layout-sheet" role="grid" aria-label="自定义布局表格"></div>
+            <p class="custom-layout-hint" id="custom-layout-hint">从左上角移动到目标格子，点击确定表格范围</p>
+          </div>
+          <button class="custom-layout-apply" type="button" id="custom-layout-apply"><i data-lucide="check"></i><span>应用布局</span></button>
+        </section>
+      </section>
+
+      <section class="drawer-panel" data-panel-body="text">
+        <div class="text-panel-scroll">
+          <p class="panel-note">功能与完整“窗口同步 → 文本管理”一致。支持网页文本框和浏览器地址栏；Firefox 网页文本框需先启动同步。</p>
+          <label class="floating-switch"><input id="floating-delay-input" type="checkbox"><span>延迟输入</span></label>
+          <section class="floating-text-section">
+            <strong>相同文本</strong>
+            <textarea id="floating-sync-text" placeholder="向所有已选环境输入相同文本"></textarea>
+            <div class="panel-actions"><button id="floating-send-text" type="button"><i data-lucide="send"></i><span>输入文本</span></button><button id="floating-clear-text" type="button"><i data-lucide="eraser"></i><span>清空内容</span></button></div>
+          </section>
+          <section class="floating-text-section">
+            <strong>随机数字</strong>
+            <div class="floating-random-row"><input id="floating-random-min" type="number" value="0.05" step="0.01" aria-label="随机数字最小值"><span>—</span><input id="floating-random-max" type="number" value="0.08" step="0.01" aria-label="随机数字最大值"><button id="floating-send-random" type="button"><i data-lucide="hash"></i><span>输入</span></button></div>
+          </section>
+          <section class="floating-text-section">
+            <div class="floating-text-heading"><strong>指定文本</strong><button id="floating-add-text-group" type="button"><i data-lucide="plus"></i><span>添加组</span></button></div>
+            <div id="floating-specified-groups"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="drawer-panel" data-panel-body="tabs">
+        <p class="panel-note">CDP 标签页批量管理仅适用于 Chromium。</p>
+        <input id="floating-tab-url" value="https://example.com" placeholder="https://example.com">
+        <div class="command-grid tab-grid">
+          <button type="button" data-tab-action="new"><i data-lucide="plus"></i><span>新建</span></button>
+          <button type="button" data-tab-action="navigate"><i data-lucide="arrow-right"></i><span>导航</span></button>
+          <button type="button" data-tab-action="reload"><i data-lucide="rotate-cw"></i><span>刷新</span></button>
+          <button type="button" data-tab-action="close"><i data-lucide="x"></i><span>关闭</span></button>
+          <button class="wide" type="button" data-tab-action="sync"><i data-lucide="refresh-cw"></i><span>从主控同步全部标签页</span></button>
+        </div>
+      </section>
+      <div class="floating-message" id="floating-message" hidden></div>
+    </section>
+  </main>
+  <script src="assets/vendor/lucide.min.js"></script>
+  <script src="sync-floating-renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+# Dependencies and local runtimes
+node_modules/
+.runtime/
+.cache/
+Browserapp/node_modules/
+Browserapp/tools/
+
+# Bundled browser kernels and build artifacts are distributed via GitHub Releases
+Browserapp/kernels/
+Browserapp/dist/
+dist/
+AiBrowser.exe
+AiBrowser-Launcher.exe
+Browserapp/*.exe
+*.pdb
+
+# Retired icon concepts; the approved launcher family is logo.ico/logo-512.png/logo.png/logo-pixel*/logo-native*
+Browserapp/assets/logo-grok-*
+Browserapp/assets/logo-macos-flat-*
+Browserapp/assets/logo-master-*
+
+# Private browser profiles, credentials, local settings, and automation output
+browser-data/
+**/browser-data/
+functional-selftest-data/
+live-sync-selftest-data/
+Browserapp/rpa-output/
+outlook-test-accounts.csv
+*.accounts.csv
+*.credentials.json
+*.secrets.json
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12
+*.key
+
+# Generated diagnostics and local test results
+*.log
+*.stderr.log
+*.stdout.log
+/*results*.json
+/*-results.json
+/FUNCTIONAL_TEST_REPORT.md
+/docs/screenshots/
+/Browserapp/*results*.json
+/Browserapp/*report*.json
+/Browserapp/full-selftest-*.json
+/Browserapp/remaining-selftest-*.json
+/Browserapp/script-selftest-*.json
+/Browserapp/tmp-run-*.js
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.tmp

@@ -1,0 +1,810 @@
+/* ==========================================================================
+   AiBrowser — Refined UI layer
+   --------------------------------------------------------------------------
+   Loads LAST, after every skin.
+
+   Design contract, chosen after resolving the real cascade in these sheets:
+
+     Skins own COLOR and TEXTURE.  Each theme hardcodes its own button fills,
+     gradients and palettes with !important, and those choices are internally
+     coordinated. This layer does not touch them — overriding one half of a
+     palette while the other half stays hardcoded only creates disharmony.
+
+     This layer owns RHYTHM and INTERACTION.  Type scale, line-height, spacing,
+     control geometry, focus, motion, scrollbars — the things that decide
+     whether the app feels comfortable, and the things no skin defines
+     consistently today (nav height alone ranged 30/32/34/36px across skins).
+
+   Everything here was verified to actually win the cascade; declarations that
+   lost to a skin or to ui-shell.css were removed rather than escalated with
+   !important, so this file stays honest about what it controls.
+   ========================================================================== */
+
+/* ---------- 1. Foundation ------------------------------------------------ */
+
+:root {
+  /* 4px spatial grid */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.25rem;
+  --sp-6: 1.5rem;
+  --sp-8: 2rem;
+
+  /* Type scale — explicit px so a skin's body size cannot rescale the UI */
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 17px;
+
+  --lh-tight: 1.25;
+  --lh-snug: 1.45;
+  --lh-normal: 1.6;
+
+  --tracking-caps: 0.07em;
+  --tracking-tight: -0.011em;
+
+  /* Motion */
+  --dur-fast: 110ms;
+  --dur: 150ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* Interaction */
+  --r-ring: 0 0 0 3px var(--ui-accent-soft);
+  --r-hover: var(--ui-surface-muted);
+  --r-press: translateY(1px);
+}
+
+/* Pixel skins press by nudging on both axes — matches their hard-shadow depth */
+html[data-ui-theme="pixel-workstation"],
+html[data-ui-theme="nes-light"] {
+  --r-press: translate(1px, 1px);
+}
+
+html[data-ui-theme] body {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 2. Sidebar ---------------------------------------------------- */
+
+/* Skins set nav height to 30/32/34/36px. One reach in every skin. */
+html[data-ui-theme] .sidebar .nav {
+  min-height: 34px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+html[data-ui-theme] .sidebar .nav.active { font-weight: 650; }
+
+html[data-ui-theme] .sidebar .nav-child {
+  min-height: 31px;
+  font-size: var(--fs-sm);
+}
+
+html[data-ui-theme] .sidebar nav { gap: 2px; }
+
+html[data-ui-theme] .sidebar .nav > i[data-lucide],
+html[data-ui-theme] .sidebar .nav > .lucide,
+html[data-ui-theme] .sidebar .nav > svg:first-child {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  flex: 0 0 16px;
+  transition: color var(--dur) var(--ease);
+}
+
+html[data-ui-theme] .sidebar .nav-label {
+  margin: var(--sp-4) var(--sp-3) var(--sp-1);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+html[data-ui-theme] .sidebar .brand strong {
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+}
+
+html[data-ui-theme] .sidebar .brand small {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+html[data-ui-theme] .sidebar .nav-chevron {
+  margin-left: auto;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  flex: 0 0 14px;
+  transition: transform var(--dur) var(--ease);
+}
+
+html[data-ui-theme] .sidebar .nav-expand[aria-expanded="true"] .nav-chevron {
+  transform: rotate(180deg);
+}
+
+/* Footer now carries the version alone — 9px was sized for a crowded row. */
+html[data-ui-theme] .sidebar-footer {
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  font-size: var(--fs-xs);
+}
+
+html[data-ui-theme] .sidebar-footer .app-version {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  opacity: 0.7;
+}
+
+/* ---------- 3. Header ----------------------------------------------------- */
+
+html[data-ui-theme] .content > header h1 {
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+}
+
+html[data-ui-theme] .content > header p {
+  margin: 3px 0 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+html[data-ui-theme] .header-right {
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- 4. Control rhythm --------------------------------------------- */
+
+/* Geometry and type only — each skin keeps its own fill, border and gradient. */
+html[data-ui-theme] .primary,
+html[data-ui-theme] .outline,
+html[data-ui-theme] .danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--ui-control-height);
+  padding: 0 var(--sp-4);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease), filter var(--dur) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+html[data-ui-theme] .mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-height: 28px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+html[data-ui-theme] .primary:hover,
+html[data-ui-theme] .new-browser:hover { filter: brightness(1.06); }
+
+html[data-ui-theme] .primary:active,
+html[data-ui-theme] .outline:active,
+html[data-ui-theme] .danger:active,
+html[data-ui-theme] .mini:active,
+html[data-ui-theme] .new-browser:active { transform: var(--r-press); }
+
+html[data-ui-theme] .primary[disabled],
+html[data-ui-theme] .outline[disabled],
+html[data-ui-theme] .danger[disabled],
+html[data-ui-theme] .mini[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
+}
+
+html[data-ui-theme] .new-browser {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 38px;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  transition: filter var(--dur) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+html[data-ui-theme] .toolbar,
+html[data-ui-theme] .sync-toolbar { gap: var(--sp-3); margin-bottom: var(--sp-4); }
+html[data-ui-theme] .toolbar-left { gap: var(--sp-2); }
+html[data-ui-theme] #profiles-sync-floating[aria-pressed="true"] {
+  border-color: var(--theme-accent, #409eff);
+  background: color-mix(in srgb, var(--theme-accent, #409eff) 12%, var(--theme-surface, #fff));
+  color: var(--theme-accent-strong, #245cff);
+}
+
+/* Inputs ----------------------------------------------------------------- */
+
+html[data-ui-theme] input:not([type="checkbox"]):not([type="radio"]),
+html[data-ui-theme] textarea {
+  font-family: inherit;
+  font-size: var(--fs-md);
+  line-height: var(--lh-snug);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+html[data-ui-theme] textarea { line-height: var(--lh-normal); resize: vertical; }
+
+html[data-ui-theme] input::placeholder,
+html[data-ui-theme] textarea::placeholder { opacity: 0.7; }
+
+html[data-ui-theme] .search { min-height: var(--ui-control-height); }
+html[data-ui-theme] .search input { font-size: var(--fs-md); }
+
+/* ---------- 5. Tables ----------------------------------------------------- */
+
+/* Generic tables. The profiles grid is tuned at source in ui-shell.css —
+   its fixed column widths make it the one table that cannot take extra pad. */
+html[data-ui-theme] .table-card th {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+html[data-ui-theme] .table-card td {
+  font-size: var(--fs-md);
+  line-height: var(--lh-snug);
+}
+
+html[data-ui-theme] .table-card tbody tr {
+  transition: background var(--dur-fast) var(--ease);
+}
+
+html[data-ui-theme] .profile-name strong { font-size: var(--fs-md); font-weight: 600; }
+html[data-ui-theme] .profile-name small { font-size: var(--fs-xs); }
+html[data-ui-theme] .status { font-size: var(--fs-sm); }
+
+html[data-ui-theme] .status.running::before {
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
+}
+
+html[data-ui-theme] .actions { gap: var(--sp-2); }
+
+/* ---------- 6. Cards, panels, empty states -------------------------------- */
+
+html[data-ui-theme] .extension-grid { gap: var(--sp-4); }
+html[data-ui-theme] .extension-card { padding: var(--sp-5); }
+
+html[data-ui-theme] .extension-card h3 {
+  margin: var(--sp-3) 0 var(--sp-2);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+}
+
+html[data-ui-theme] .extension-card p {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+
+html[data-ui-theme] .settings-grid { gap: var(--sp-4); }
+html[data-ui-theme] .settings-grid article { padding: var(--sp-5); }
+
+html[data-ui-theme] .settings-grid h3 {
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+}
+
+html[data-ui-theme] .empty,
+html[data-ui-theme] .sync-empty {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-8) var(--sp-6);
+  font-size: var(--fs-md);
+  line-height: var(--lh-normal);
+  text-align: center;
+}
+
+/* ---------- 7. Dialogs, toasts -------------------------------------------- */
+
+html[data-ui-theme] dialog::backdrop {
+  background: rgba(10, 14, 20, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+html[data-ui-theme] .dialog-head h2 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+}
+
+html[data-ui-theme] .dialog-head p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+
+html[data-ui-theme] dialog label {
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+}
+
+html[data-ui-theme] .dialog-actions {
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--ui-border);
+}
+
+html[data-ui-theme] .toast {
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-md);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+/* ---------- 8. Flows / RPA ------------------------------------------------ */
+
+html[data-ui-theme] .rpa-banner {
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+
+html[data-ui-theme] .rpa-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+html[data-ui-theme] .rpa-toolbar-right { margin-left: auto; font-size: var(--fs-sm); }
+
+html[data-ui-theme] .rpa-subtabs button,
+html[data-ui-theme] .rpa-tabs-line button {
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+html[data-ui-theme] .rpa-subtabs button.active,
+html[data-ui-theme] .rpa-tabs-line button.active { font-weight: 650; }
+
+html[data-ui-theme] .rpa-empty-card {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-8) var(--sp-6);
+  text-align: center;
+}
+
+html[data-ui-theme] .rpa-empty-art { font-size: 40px; line-height: 1; opacity: 0.85; }
+
+html[data-ui-theme] .rpa-field {
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+}
+
+html[data-ui-theme] .rpa-muted { font-size: var(--fs-sm); line-height: var(--lh-normal); }
+
+html[data-ui-theme] #rpa-steps-json,
+html[data-ui-theme] .rpa-code-block,
+html[data-ui-theme] .rpa-log {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+}
+
+html[data-ui-theme] .ai-gradient-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--ui-control-height);
+  font-size: var(--fs-md);
+  font-weight: 650;
+  cursor: pointer;
+  transition: filter var(--dur) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+html[data-ui-theme] .ai-gradient-button:hover { filter: brightness(1.08); }
+html[data-ui-theme] .ai-gradient-button:active { transform: var(--r-press); }
+
+html[data-ui-theme] .log-row {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+
+/* ---------- 9. Profile editor bleed ---------------------------------------- */
+
+/* The editor view is pulled out of main's padding so its header band can run
+   edge to edge, and the tab strip pays that back with its own inline padding.
+   Any skin that zeroes the strip's padding (retro-desktop did, with
+   !important) leaves the first tab hanging under the sidebar. Tie the two to
+   one value so they cannot drift apart again. */
+html[data-ui-theme] #view-profile-editor {
+  margin: calc(var(--sp-6) * -1);
+}
+
+html[data-ui-theme] #view-profile-editor .profile-editor-head,
+html[data-ui-theme] #view-profile-editor .editor-tabs {
+  padding-inline: var(--sp-6) !important;
+}
+
+html[data-ui-theme] #view-profile-editor .environment-editor {
+  padding-inline: var(--sp-6);
+}
+
+/* ---------- 10. Environment / group / proxy marks -------------------------- */
+
+/* These squares carried a white gloss sweep, a 14px drop shadow and an inner
+   highlight — the glassy 2010 look. Flattened to a solid tile with one hairline
+   ring for definition, which also reads better at the 34px they are used at. */
+html[data-ui-theme] .ui-mark,
+html[data-ui-theme] .env-badge,
+html[data-ui-theme] .group-mark,
+html[data-ui-theme] .proxy-mark {
+  border-radius: 9px !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14) !important;
+}
+
+html[data-ui-theme] .env-badge::after,
+html[data-ui-theme] .ui-mark::after {
+  display: none !important;
+}
+
+html[data-ui-theme] .env-badge-num {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  text-shadow: none;
+}
+
+/* Pixel skins keep square corners; a rounded tile fights their grammar. */
+html[data-ui-theme="pixel-workstation"] .ui-mark,
+html[data-ui-theme="pixel-workstation"] .env-badge,
+html[data-ui-theme="nes-light"] .ui-mark,
+html[data-ui-theme="nes-light"] .env-badge {
+  border-radius: 2px !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* ---------- 11. Focus, selection, scrollbars ------------------------------ */
+
+/* No skin defines a consistent focus state today — keyboard users get one now. */
+html[data-ui-theme] :focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+html[data-ui-theme] .sidebar .nav:focus-visible,
+html[data-ui-theme] .primary:focus-visible,
+html[data-ui-theme] .outline:focus-visible,
+html[data-ui-theme] .danger:focus-visible,
+html[data-ui-theme] .mini:focus-visible {
+  outline: none;
+  box-shadow: var(--r-ring), 0 0 0 1px var(--ui-accent);
+}
+
+html[data-ui-theme] ::selection {
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
+}
+
+html[data-ui-theme] * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border-strong) transparent;
+}
+
+html[data-ui-theme] ::-webkit-scrollbar { width: 10px; height: 10px; }
+html[data-ui-theme] ::-webkit-scrollbar-track { background: transparent; }
+
+html[data-ui-theme] ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--ui-border-strong);
+  background-clip: content-box;
+}
+
+html[data-ui-theme] ::-webkit-scrollbar-thumb:hover {
+  background: var(--ui-muted);
+  background-clip: content-box;
+}
+
+html[data-ui-theme="pixel-workstation"] ::-webkit-scrollbar-thumb,
+html[data-ui-theme="nes-light"] ::-webkit-scrollbar-thumb { border-radius: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui-theme] *,
+  html[data-ui-theme] *::before,
+  html[data-ui-theme] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- 12. Windows title bar: overlay without a blank content row ---- */
+
+html[data-ui-theme][data-platform="windows"][data-titlebar="integrated"] {
+  --titlebar-drag-height: 32px;
+  --titlebar-content-offset: 0px;
+}
+
+/* Native caption buttons only occupy the upper-right corner. The old theme
+   rules reserved another full 40px row in both columns, producing the large
+   empty band above the actual UI. Keep the drag region as an overlay instead. */
+html[data-ui-theme][data-platform="windows"][data-titlebar="integrated"] .sidebar {
+  padding-top: 10px !important;
+}
+
+html[data-ui-theme][data-platform="windows"][data-titlebar="integrated"] .content > header {
+  min-height: var(--ui-header-height) !important;
+  height: auto !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  padding-right: calc(var(--titlebar-caption-pad, 138px) + 10px) !important;
+}
+
+html[data-ui-theme][data-platform="windows"][data-titlebar="integrated"] .sidebar::before,
+html[data-ui-theme][data-platform="windows"][data-titlebar="integrated"] .content > header::before {
+  height: 32px !important;
+}
+
+/* ---------- 13. Resizable table columns ---------------------------------- */
+
+html[data-ui-theme] .table-resizable-wrap {
+  overflow-x: auto !important;
+  overflow-y: auto;
+}
+
+html[data-ui-theme] table.resizable-table {
+  table-layout: fixed;
+}
+
+html[data-ui-theme] table.resizable-table > thead > tr:first-child > th.table-resizable-header {
+  position: relative;
+}
+
+html[data-ui-theme] table.resizable-table > thead > tr:first-child > th { overflow: visible; }
+
+/* The header owns column geometry. Older theme rules left percentage/min-width
+   constraints on body cells, which created wide invisible gaps and exaggerated
+   horizontal scrolling after a user resized one column. */
+html[data-ui-theme] table.resizable-table > tbody > tr > td {
+  min-width: 0 !important;
+}
+html[data-ui-theme] table.resizable-table .network-info {
+  min-width: 0;
+}
+
+html[data-ui-theme] .sync-native-mode {
+  display: block;
+  margin-top: 3px;
+  color: var(--ui-muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+html[data-ui-theme] .table-column-resizer {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  min-height: 28px;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+html[data-ui-theme] .table-column-resizer::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  bottom: 20%;
+  left: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background-color 120ms ease, top 120ms ease, bottom 120ms ease;
+}
+
+html[data-ui-theme] .table-column-resizer:hover::after,
+html[data-ui-theme] .table-column-resizer:focus-visible::after,
+html[data-ui-theme] .table-column-resizer.active::after {
+  top: 8%;
+  bottom: 8%;
+  background: var(--ui-accent);
+}
+
+html.table-column-resizing,
+html.table-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* ---------- 14. Table overflow, icon actions and themed help -------------- */
+
+html[data-ui-theme] .table-resizable-wrap {
+  max-width: 100%;
+  min-width: 0;
+  overscroll-behavior-x: contain;
+}
+
+html[data-ui-theme] .table-resizable-wrap > table.resizable-table {
+  max-width: none !important;
+}
+
+html[data-ui-theme] .table-actions,
+html[data-ui-theme] .sync-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+html[data-ui-theme] table .table-action,
+html[data-ui-theme] table .profile-action {
+  display: inline-grid !important;
+  width: 30px !important;
+  min-width: 30px !important;
+  max-width: 30px !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 !important;
+  place-items: center;
+  overflow: hidden;
+}
+
+html[data-ui-theme] table .table-action svg,
+html[data-ui-theme] table .profile-action svg {
+  width: 15px;
+  height: 15px;
+  margin: 0 !important;
+}
+
+html[data-ui-theme] .table-action-label,
+html[data-ui-theme] .profile-action-label { display: none !important; }
+
+html[data-ui-theme] .proxy-group-toggle {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 !important;
+  place-items: center;
+}
+
+.ui-tooltip {
+  position: fixed;
+  z-index: 12000;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 7px 10px;
+  pointer-events: none;
+  border: 1px solid var(--ui-border-strong, #7a8798);
+  border-radius: 7px;
+  opacity: 0;
+  transform: translateY(2px);
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text, #172033);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .18);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  transition: opacity 90ms ease, transform 90ms ease;
+}
+
+.ui-tooltip.visible { opacity: 1; transform: translateY(0); }
+
+html[data-ui-theme="pixel-workstation"] .ui-tooltip,
+html[data-ui-theme="nes-light"] .ui-tooltip,
+html[data-ui-theme="retro-desktop"] .ui-tooltip {
+  border-radius: 2px;
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--ui-text) 34%, transparent);
+}
+
+.table-horizontal-rail {
+  position: fixed;
+  z-index: 9000;
+  bottom: 7px;
+  display: none;
+  height: 17px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  border: 1px solid var(--ui-border, #d6dde8);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ui-surface, #fff) 94%, transparent);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, .16);
+  scrollbar-color: var(--ui-accent, #3978d1) var(--ui-surface-muted, #eef1f5) !important;
+  scrollbar-width: auto !important;
+}
+
+.table-horizontal-rail.visible { display: block; }
+.table-horizontal-rail-inner { height: 1px; }
+.table-horizontal-rail::-webkit-scrollbar { height: 15px !important; }
+.table-horizontal-rail::-webkit-scrollbar-track { background: var(--ui-surface-muted, #eef1f5) !important; }
+.table-horizontal-rail::-webkit-scrollbar-thumb {
+  border: 3px solid var(--ui-surface-muted, #eef1f5) !important;
+  border-radius: 999px;
+  background: var(--ui-accent, #3978d1) !important;
+  background-clip: padding-box !important;
+}
+
+/* ---------- 15. Full-height AI workspace --------------------------------- */
+
+html[data-ui-theme] .content > main:has(#view-ai.active) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html[data-ui-theme] #view-ai.active {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+html[data-ui-theme] #view-ai .ai-layout {
+  min-height: 0 !important;
+  height: 100% !important;
+}
+
+/* ---------- 16. Operation log column alignment --------------------------- */
+
+html[data-ui-theme] .retro-log-columns,
+html[data-ui-theme] .log-row {
+  display: grid !important;
+  grid-template-columns: 112px 132px minmax(0, 1fr) !important;
+  gap: 0 !important;
+}
+
+html[data-ui-theme] .log-row { padding: 0 !important; }
+
+html[data-ui-theme] .retro-log-columns > span,
+html[data-ui-theme] .log-row > span {
+  min-width: 0;
+  margin: 0 !important;
+  padding: 9px 12px !important;
+  border-right: 1px solid var(--ui-border, #d6dde8);
+}
+
+html[data-ui-theme] .retro-log-columns > span:last-child,
+html[data-ui-theme] .log-row > span:last-child { border-right: 0; }
