@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require(Buffer.from('ZWxlY3Ryb24=', 'base
 
 contextBridge.exposeInMainWorld('ops', Object.freeze({
   getInfo: () => ipcRenderer.invoke('system:info'),
+  appUpdateCheck: () => ipcRenderer.invoke('app:update-check'),
+  appUpdateDownload: () => ipcRenderer.invoke('app:update-download'),
   setUiChrome: (payload) => ipcRenderer.invoke('system:set-ui-chrome', payload),
   setSyncFloatingEnabled: (enabled) => ipcRenderer.invoke('system:set-sync-floating', Boolean(enabled)),
   kernelStatus: () => ipcRenderer.invoke('kernel:status'),

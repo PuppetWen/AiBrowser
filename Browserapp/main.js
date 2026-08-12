@@ -132,16 +132,18 @@ if (portableSourceMode) {
 const defaultProfileDataRoot = path.join(app.getPath('userData'), 'browser-profiles-v2');
 const localSettingsFile = path.join(app.getPath('userData'), 'openbrowser-local-settings.json');
 
-const UPDATE_REPOSITORY = 'lyu0805/OpenBrowser';
+const UPDATE_REPOSITORY = 'PuppetWen/AiBrowser';
 const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`;
 const UPDATE_LATEST_HTML = `https://github.com/${UPDATE_REPOSITORY}/releases/latest`;
 const UPDATE_RELEASES_ATOM = `https://github.com/${UPDATE_REPOSITORY}/releases.atom`;
 const UPDATE_ASSETS = Object.freeze({
   'darwin:x64': 'AiBrowser-macOS-x86_64.dmg',
   'darwin:arm64': 'AiBrowser-macOS-arm64-with-kernel.dmg',
-  'win32:x64': 'AiBrowser-Windows-x86_64-with-kernel.exe',
+  'win32:x64': 'AiBrowser-Windows-x86_64-with-kernel-Setup.exe',
 });
-const UPDATE_MAX_BYTES = 1024 * 1024 * 1024;
+// Current integrated-kernel Windows packages are larger than 1 GiB. Keep a
+// bounded ceiling while allowing the signed release installer to download.
+const UPDATE_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const UPDATE_TIMEOUT_MS = 20000;
 const UPDATE_ALLOWED_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
 
@@ -151,6 +153,31 @@ function updatePlatformKey() {
 
 function updateAssetName() {
   return UPDATE_ASSETS[updatePlatformKey()] || null;
+}
+
+/**
+ * Electron's default session follows the operating-system proxy configuration,
+ * including a local HTTP/SOCKS proxy and PAC rules. Keep global fetch only as a
+ * development-host fallback.
+ */
+function fetchAppUpdate(url, options = {}) {
+  const sessionFetch = session?.defaultSession?.fetch;
+  if (typeof sessionFetch === 'function') return sessionFetch.call(session.defaultSession, url, options);
+  return fetch(url, options);
+}
+
+async function resolveAppUpdateNetwork() {
+  const [configured, route] = await Promise.all([
+    resolveSystemProxy().catch(() => ({ enabled: false, source: 'unavailable' })),
+    session?.defaultSession?.resolveProxy?.(UPDATE_LATEST_HTML).catch(() => ''),
+  ]);
+  const resolvedRoute = String(route || '').trim() || 'DIRECT';
+  const usesProxy = !/^DIRECT(?:;|$)/i.test(resolvedRoute) || Boolean(configured?.enabled);
+  return {
+    mode: usesProxy ? 'system-proxy' : 'direct',
+    route: resolvedRoute,
+    source: String(configured?.source || 'electron-session'),
+  };
 }
 
 function compareVersions(left, right) {
@@ -225,7 +252,7 @@ async function resolveLatestReleaseMeta() {
   try {
     // 1) Atom feed — no API quota, works in Electron without redirect:manual quirks
     try {
-      const response = await fetch(UPDATE_RELEASES_ATOM, {
+      const response = await fetchAppUpdate(UPDATE_RELEASES_ATOM, {
         headers: { 'User-Agent': updateUserAgent(), Accept: 'application/atom+xml,application/xml,text/xml,*/*' },
         signal: controller.signal,
       });
@@ -244,7 +271,7 @@ async function resolveLatestReleaseMeta() {
     // 2) /releases/latest — follow redirects; final URL or body contains /releases/tag/vX.Y.Z
     //    (prefer follow over manual: Electron Chromium often hides Location on opaqueredirect)
     try {
-      const response = await fetch(UPDATE_LATEST_HTML, {
+      const response = await fetchAppUpdate(UPDATE_LATEST_HTML, {
         method: 'GET',
         redirect: 'follow',
         headers: htmlHeaders,
@@ -266,7 +293,7 @@ async function resolveLatestReleaseMeta() {
 
     // 2b) manual redirect Location (Node undici / some hosts)
     try {
-      const response = await fetch(UPDATE_LATEST_HTML, {
+      const response = await fetchAppUpdate(UPDATE_LATEST_HTML, {
         method: 'GET',
         redirect: 'manual',
         headers: htmlHeaders,
@@ -282,7 +309,7 @@ async function resolveLatestReleaseMeta() {
     } catch (_) { /* try next */ }
 
     // 3) REST API (last resort; unauthenticated often 403 rate-limit)
-    const response = await fetch(UPDATE_API_URL, {
+    const response = await fetchAppUpdate(UPDATE_API_URL, {
       headers: {
         Accept: 'application/vnd.github+json',
         'User-Agent': updateUserAgent(),
@@ -312,7 +339,7 @@ async function resolveReleaseAsset(remoteVersion, assetName) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), UPDATE_TIMEOUT_MS);
     try {
-      const response = await fetch(directUrl, {
+      const response = await fetchAppUpdate(directUrl, {
         method: 'HEAD',
         redirect: 'follow',
         headers: { 'User-Agent': updateUserAgent() },
@@ -337,7 +364,7 @@ async function resolveReleaseAsset(remoteVersion, assetName) {
     const timer = setTimeout(() => controller.abort(), UPDATE_TIMEOUT_MS);
     try {
       const apiUrl = `${UPDATE_API_URL.replace(/\/latest$/, '')}/tags/v${encodeURIComponent(remoteVersion)}`;
-      const response = await fetch(apiUrl, {
+      const response = await fetchAppUpdate(apiUrl, {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': updateUserAgent() },
         signal: controller.signal,
       });
@@ -381,7 +408,10 @@ async function fetchUpdateRelease() {
 async function checkAppUpdate() {
   const assetName = updateAssetName();
   const currentVersion = app.getVersion();
-  const meta = await resolveLatestReleaseMeta();
+  const [meta, network] = await Promise.all([
+    resolveLatestReleaseMeta(),
+    resolveAppUpdateNetwork(),
+  ]);
   const remoteVersion = meta.remoteVersion;
   if (!remoteVersion) throw new Error('GitHub Release has no version tag');
   const upToDate = compareVersions(remoteVersion, currentVersion) <= 0;
@@ -409,6 +439,7 @@ async function checkAppUpdate() {
     platform: process.platform,
     arch: process.arch,
     source: meta.source || 'unknown',
+    network,
     asset: asset ? { name: asset.name, size: asset.size || 0, browser_download_url: asset.browser_download_url } : null,
   };
 }
@@ -434,7 +465,7 @@ async function downloadAppUpdate() {
   const temporaryPath = path.join(app.getPath('downloads'), `${baseName}-${randomUUID()}${extension}`);
   let received = 0;
   try {
-    const response = await fetch(downloadUrl, {
+    const response = await fetchAppUpdate(downloadUrl, {
       headers: { Accept: 'application/octet-stream', 'User-Agent': `AiBrowser/${app.getVersion()}` },
       signal: controller.signal,
     });
@@ -527,6 +558,7 @@ async function saveCachedAppUpdateStatus(result) {
       releaseName: result.releaseName,
       releaseUrl: result.releaseUrl,
       source: result.source,
+      network: result.network || null,
       asset: result.asset || null,
       checkedAt: new Date().toISOString(),
     };
@@ -2089,10 +2121,8 @@ app.whenReady().then(async () => {
     platform: process.platform,
     syncFloatingEnabled: localSettingsCache.syncFloatingEnabled === true,
   }));
-  // app:update-check / app:update-download / app:open-github were unregistered
-  // together with the update UI. Nothing in this build can reach github.com now.
-  // The helpers below (checkAppUpdate/downloadAppUpdate/startAppUpdateWatcher)
-  // are left inert so the feature can be restored by re-adding these three lines.
+  registerTrustedIpc('app:update-check', () => pushAppUpdateStatus({ check: true }));
+  registerTrustedIpc('app:update-download', () => downloadAppUpdate());
   registerTrustedIpc('system:set-ui-chrome', (_event, payload) => {
     const win = BrowserWindow.fromWebContents(_event.sender) || mainWindow;
     const themeId = typeof payload === 'string' ? payload : String(payload?.themeId || '');
@@ -2723,9 +2753,7 @@ app.whenReady().then(async () => {
     const floating = await createSyncFloatingWindow();
     floating.show();
   }
-  // Automatic GitHub update polling is off: the sidebar traffic light it fed was
-  // removed, and it reached out to github.com on startup and every 6h.
-  // 本地设置 → 检查更新 still runs the same check on demand.
+  startAppUpdateWatcher();
 });
 
 app.on('before-quit', (event) => {

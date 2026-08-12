@@ -46,10 +46,11 @@
         <button class="nav" data-view="logs"><i data-lucide="scroll-text"></i><span data-i18n="nav.logs">操作日志</span></button>
         <button class="nav" data-view="system"><i data-lucide="settings-2"></i><span data-i18n="nav.system">本地设置</span></button>
       </nav>
-      <!-- GitHub link and the update traffic light were removed on request;
-           the 本地设置 update card is gone too. This build never checks GitHub. -->
       <div class="sidebar-footer">
-        <span class="app-version" id="app-version">v1.0.2</span>
+        <span class="app-version-wrap" id="app-version-update" role="button" tabindex="-1" aria-disabled="true">
+          <span class="app-version" id="app-version">v1.0.1</span>
+          <span class="version-traffic-light" id="version-traffic-light" data-state="checking" aria-hidden="true"></span>
+        </span>
       </div>
     </aside>
 
@@ -1362,7 +1363,7 @@
     <label>标签<input name="tag" placeholder="Demo"></label>
     <div class="dialog-actions"><button value="cancel" class="outline">取消</button><button value="default" class="primary">创建</button></div>
   </form></dialog>
-  <dialog id="group-dialog"><form method="dialog" id="group-form"><div class="dialog-head"><h2 id="group-dialog-title">新建分组</h2><button value="cancel" type="submit">×</button></div><input type="hidden" id="group-edit-id"><label>分组名称<input id="group-name" maxlength="40" required placeholder="例如：美国区"></label><label>颜色<span class="themed-color-control"><span class="themed-color-preview" id="group-color-preview"></span><input id="group-color" type="text" value="#245cff" maxlength="7" pattern="#[0-9a-fA-F]{6}" spellcheck="false" aria-label="分组颜色，十六进制"></span></label><div class="group-color-chips" id="group-color-chips"></div><label>备注<textarea id="group-note" rows="2" maxlength="200" placeholder="可选说明"></textarea></label><div class="dialog-actions"><button value="cancel" class="outline" type="submit">取消</button><button value="default" class="primary" type="submit">保存</button></div></form></dialog>
+  <dialog id="group-dialog"><form method="dialog" id="group-form"><div class="dialog-head"><h2 id="group-dialog-title">新建分组</h2><button value="cancel" type="submit">×</button></div><input type="hidden" id="group-edit-id"><label>分组名称<input id="group-name" type="text" maxlength="40" required autocomplete="off" placeholder="例如：美国区"></label><label>颜色<span class="themed-color-control"><span class="themed-color-preview" id="group-color-preview"></span><input id="group-color" type="text" value="#245cff" maxlength="7" pattern="#[0-9a-fA-F]{6}" spellcheck="false" aria-label="分组颜色，十六进制"></span></label><div class="group-color-chips" id="group-color-chips"></div><label>备注<textarea id="group-note" rows="2" maxlength="200" placeholder="可选说明"></textarea></label><div class="dialog-actions"><button value="cancel" class="outline" type="submit">取消</button><button value="default" class="primary" type="submit">保存</button></div></form></dialog>
 
   <dialog id="batch-add-dialog"><form method="dialog" id="batch-add-form">
     <div class="dialog-head"><div><h2>批量新增环境</h2><p>自动优先使用当前最小的空缺编号</p></div><button value="cancel">&times;</button></div>
