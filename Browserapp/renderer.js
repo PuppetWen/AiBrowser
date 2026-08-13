@@ -4904,12 +4904,9 @@ function renderAppUpdateStatus(status = {}) {
       const updateLink = document.createElement('button');
       updateLink.type = 'button';
       updateLink.className = 'primary app-update-release-link';
-      updateLink.disabled = !appUpdateUi.status.releaseUrl;
-      updateLink.textContent = tx('前往 GitHub 更新安装');
-      updateLink.addEventListener('click', async () => {
-        try { await window.ops.appUpdateOpenRelease(appUpdateUi.status.releaseUrl); }
-        catch (error) { toast(tx('打开 GitHub 失败：') + (error?.message || error)); }
-      });
+      updateLink.disabled = !appUpdateUi.status.canDownload || appUpdateUi.downloading;
+      updateLink.textContent = tx('更新安装');
+      updateLink.addEventListener('click', downloadLatestAppUpdate);
       stateText.append(updateLink);
     } else {
       stateText.textContent = state === 'green' ? tx('当前已是最新版') : (state === 'checking' ? tx('正在检测版本...') : tx('版本检测失败'));
@@ -5016,6 +5013,10 @@ async function downloadLatestAppUpdate() {
 }
 
 document.getElementById('update-check')?.addEventListener('click', checkLatestAppUpdate);
+document.getElementById('update-github')?.addEventListener('click', async () => {
+  try { await window.ops.appUpdateOpenRelease('https://github.com/PuppetWen/AiBrowser'); }
+  catch (error) { toast(tx('打开 GitHub 失败：') + (error?.message || error)); }
+});
 
 window.ops.onEvent((value) => {
   if (value?.type === 'app-update-status') renderAppUpdateStatus(value);

@@ -402,6 +402,7 @@ dialog[open] > .themed-select-menu {
 .app-update-version-grid span { display: block; margin-bottom: 8px; color: var(--ui-muted); font-size: 11px; }
 .app-update-version-grid strong { display: block; overflow: hidden; color: var(--ui-text); font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
 .app-update-progress { display: grid; gap: 12px; padding: 18px; border-radius: var(--ui-radius); }
+.app-update-progress[hidden] { display: none !important; }
 .app-update-progress > div:first-child { display: flex; justify-content: space-between; gap: 14px; }
 .app-update-progress span { color: var(--ui-muted); font-size: 11px; }
 .app-update-progress-track { height: 8px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--ui-border) 65%, transparent); }
