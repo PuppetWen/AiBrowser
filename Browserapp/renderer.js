@@ -2317,6 +2317,7 @@ document.getElementById('editor-os')?.addEventListener('change', () => refreshUa
 function profileEngine(id) { return engineProfiles.find((item) => item.id === id) || { running: false, assignedExtensions: [] }; }
 
 function viewMetaFor(view) {
+  if (view === 'update') return [tx('版本更新'), tx('检测 GitHub 最新版本并安全地下载安装更新')];
   const map = {
     profiles: ['view.profiles', 'view.profiles.sub'],
     'profile-editor': ['view.profile-editor', 'view.profile-editor.sub'],
@@ -2372,6 +2373,7 @@ function switchView(view) {
     document.getElementById('rpa-menu-toggle')?.classList.remove('open');
   }
   if (view === 'api-mcp') refreshApiMcpPage();
+  if (view === 'update') renderAppUpdateStatus(appUpdateUi.status || {});
 }
 
 // ========== 分组管理 ==========
@@ -4842,6 +4844,8 @@ $('#open-profile-storage').addEventListener('click', async () => { try { await w
 const appUpdateUi = {
   status: null,
   downloading: false,
+  checking: false,
+  retry: null,
 };
 
 function appUpdateTooltip(status = {}) {
@@ -4858,7 +4862,7 @@ function appUpdateTooltip(status = {}) {
     `检查时间：${checkedAt}`,
   ];
   if (status.light === 'green') detail.push('当前已是最新版');
-  if (status.light === 'red') detail.push(status.canDownload ? '点击红点下载并运行更新安装包' : '发现新版本，但该平台安装包尚未发布');
+  if (status.light === 'red') detail.push(status.canDownload ? '新版本可在「版本更新」页面下载安装' : '发现新版本，但该平台安装包尚未发布');
   if (status.error) detail.push(`检查失败：${status.error}`);
   if (status.warning) detail.push(`使用缓存结果：${status.warning}`);
   if (appUpdateUi.downloading) detail.push('正在下载更新安装包...');
@@ -4874,47 +4878,98 @@ function renderAppUpdateStatus(status = {}) {
     ? appUpdateUi.status.light
     : 'unknown';
   dot.dataset.state = appUpdateUi.downloading ? 'checking' : state;
-  const clickable = state === 'red' && appUpdateUi.status.canDownload && !appUpdateUi.downloading;
-  wrap.classList.toggle('is-clickable', clickable);
-  wrap.tabIndex = clickable ? 0 : -1;
-  wrap.setAttribute('aria-disabled', String(!clickable));
+  wrap.classList.remove('is-clickable');
+  wrap.removeAttribute('role');
+  wrap.removeAttribute('tabindex');
+  wrap.removeAttribute('aria-disabled');
   const tooltip = appUpdateTooltip(appUpdateUi.status);
-  wrap.title = tooltip;
   dot.title = tooltip;
-  wrap.setAttribute('aria-label', tooltip.replace(/\n/g, '，'));
+  dot.setAttribute('aria-label', tooltip.replace(/\n/g, '，'));
+
+  const current = document.getElementById('update-current-version');
+  const latest = document.getElementById('update-latest-version');
+  const stateText = document.getElementById('update-state-text');
+  const network = document.getElementById('update-network');
+  const checked = document.getElementById('update-checked-at');
+  const notes = document.getElementById('update-release-notes');
+  const install = document.getElementById('update-install');
+  const check = document.getElementById('update-check');
+  const progress = document.getElementById('update-progress');
+  const progressBar = document.getElementById('update-progress-bar');
+  const progressText = document.getElementById('update-progress-text');
+  if (current) current.textContent = `v${appUpdateUi.status.currentVersion || '--'}`;
+  if (latest) latest.textContent = appUpdateUi.status.remoteVersion ? `v${appUpdateUi.status.remoteVersion}` : '--';
+  if (stateText) stateText.textContent = state === 'green' ? tx('当前已是最新版') : (state === 'red' ? tx('检测到新版本') : (state === 'checking' ? tx('正在检测版本...') : tx('版本检测失败')));
+  if (network) network.textContent = appUpdateUi.status.network?.mode === 'system-proxy'
+    ? `${tx('本地代理')} · ${appUpdateUi.status.network.route || appUpdateUi.status.network.source || '--'}`
+    : tx('本地直连');
+  if (checked) checked.textContent = appUpdateUi.status.checkedAt ? new Date(appUpdateUi.status.checkedAt).toLocaleString() : '--';
+  if (notes) notes.textContent = appUpdateUi.status.releaseNotes || tx('该版本暂未提供更新说明。');
+  if (install) {
+    install.hidden = !(state === 'red' && appUpdateUi.status.canDownload);
+    install.disabled = appUpdateUi.downloading || appUpdateUi.checking;
+  }
+  if (check) check.disabled = appUpdateUi.downloading || appUpdateUi.checking;
+  if (progress) progress.hidden = !appUpdateUi.downloading;
+  const percent = Number(appUpdateUi.status.progress);
+  if (progressBar) progressBar.style.width = `${Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0}%`;
+  if (progressText) {
+    progressText.textContent = appUpdateUi.retry
+      ? tx(`网络中断，${appUpdateUi.retry.retryIn} 秒后进行第 ${appUpdateUi.retry.attempt + 1}/${appUpdateUi.retry.maxAttempts} 次重连，已下载内容会保留`)
+      : (Number.isFinite(percent) ? tx(`正在下载 ${percent}%`) : tx('正在连接下载服务器...'));
+  }
+}
+
+async function checkLatestAppUpdate() {
+  if (appUpdateUi.checking || appUpdateUi.downloading) return;
+  appUpdateUi.checking = true;
+  renderAppUpdateStatus({ ...(appUpdateUi.status || {}), light: 'checking' });
+  try {
+    const status = await window.ops.appUpdateCheck();
+    renderAppUpdateStatus(status || {});
+  } catch (error) {
+    renderAppUpdateStatus({ light: 'unknown', error: String(error?.message || error), checkedAt: new Date().toISOString() });
+  } finally {
+    appUpdateUi.checking = false;
+    renderAppUpdateStatus(appUpdateUi.status || {});
+  }
 }
 
 async function downloadLatestAppUpdate() {
   const status = appUpdateUi.status || {};
   if (appUpdateUi.downloading || status.light !== 'red' || !status.canDownload) return;
   appUpdateUi.downloading = true;
+  appUpdateUi.retry = null;
   renderAppUpdateStatus(status);
-  toast(tx('正在通过本地代理下载最新版安装包...'));
+  toast(tx('正在下载最新版安装包，网络中断时会自动续传...'));
   try {
     const result = await window.ops.appUpdateDownload();
-    if (result?.success) toast(tx('更新安装包已下载并打开，请按安装向导完成更新'));
+    if (result?.success) toast(tx('更新包已下载，程序将关闭并在原安装目录完成更新'));
     else if (result?.upToDate) toast(tx('当前已是最新版'));
   } catch (error) {
     appUpdateUi.status = { ...status, downloadError: String(error?.message || error) };
     toast(tx('更新下载失败：') + (error?.message || error));
   } finally {
     appUpdateUi.downloading = false;
+    appUpdateUi.retry = null;
     renderAppUpdateStatus(appUpdateUi.status || status);
   }
 }
 
-document.getElementById('app-version-update')?.addEventListener('click', downloadLatestAppUpdate);
-document.getElementById('app-version-update')?.addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  event.preventDefault();
-  downloadLatestAppUpdate();
-});
+document.getElementById('update-check')?.addEventListener('click', checkLatestAppUpdate);
+document.getElementById('update-install')?.addEventListener('click', downloadLatestAppUpdate);
 
 window.ops.onEvent((value) => {
   if (value?.type === 'app-update-status') renderAppUpdateStatus(value);
   if (value?.type === 'app-update-progress') {
-    appUpdateUi.downloading = Number(value.percent) < 100;
+    appUpdateUi.downloading = value.phase !== 'installing';
+    appUpdateUi.retry = null;
     renderAppUpdateStatus({ ...(appUpdateUi.status || {}), progress: value.percent });
+  }
+  if (value?.type === 'app-update-retry') {
+    appUpdateUi.downloading = true;
+    appUpdateUi.retry = value;
+    renderAppUpdateStatus({ ...(appUpdateUi.status || {}), progress: appUpdateUi.status?.progress });
   }
 });
 
@@ -5063,7 +5118,7 @@ async function initialize() {
   const info = await window.ops.getInfo();
   const appVersion = document.getElementById('app-version');
   if (appVersion && info?.appVersion) appVersion.textContent = `v${info.appVersion}`;
-  renderAppUpdateStatus({ light: 'checking', currentVersion: info?.appVersion || '1.0.1' });
+  renderAppUpdateStatus({ light: 'checking', currentVersion: info?.appVersion || '--' });
   updateEngineBadge(info);
   renderRuntimeInfo(info);
   syncState = await window.ops.getSyncState(); preferredMasterId = syncState.master || null; if (syncState.active) selectedSessions = new Set(syncState.selected || []);

@@ -43,13 +43,14 @@
         </div>
                 <button class="nav" data-view="api-mcp"><i data-lucide="braces"></i><span data-i18n="nav.api">API & MCP</span></button>
         <button class="nav" data-view="ai"><i data-lucide="sparkles"></i><span data-i18n="nav.ai">AI 接入</span></button>
+        <button class="nav" data-view="update"><i data-lucide="cloud-download"></i><span>&#29256;&#26412;&#26356;&#26032;</span></button>
         <button class="nav" data-view="logs"><i data-lucide="scroll-text"></i><span data-i18n="nav.logs">操作日志</span></button>
         <button class="nav" data-view="system"><i data-lucide="settings-2"></i><span data-i18n="nav.system">本地设置</span></button>
       </nav>
       <div class="sidebar-footer">
-        <span class="app-version-wrap" id="app-version-update" role="button" tabindex="-1" aria-disabled="true">
-          <span class="app-version" id="app-version">v1.0.1</span>
-          <span class="version-traffic-light" id="version-traffic-light" data-state="checking" aria-hidden="true"></span>
+        <span class="app-version-wrap" id="app-version-update">
+          <span class="app-version" id="app-version">v--</span>
+          <span class="version-traffic-light" id="version-traffic-light" data-state="checking" role="img"></span>
         </span>
       </div>
     </aside>
@@ -1052,6 +1053,32 @@
             <div class="log-card" id="log-list"></div>
           </div>
         </section>
+        <section class="view" id="view-update">
+          <div class="app-update-page">
+            <article class="app-update-hero">
+              <div class="app-update-mark"><i data-lucide="cloud-download" aria-hidden="true"></i></div>
+              <div class="app-update-heading"><span class="app-update-kicker">AIBROWSER RELEASE CHANNEL</span><h2>&#29256;&#26412;&#26356;&#26032;</h2><p id="update-state-text">&#27491;&#22312;&#26816;&#27979;&#29256;&#26412;...</p></div>
+              <div class="app-update-actions">
+                <button class="outline" id="update-check" type="button"><i data-lucide="refresh-cw" aria-hidden="true"></i>&#37325;&#26032;&#26816;&#27979;</button>
+                <button class="primary" id="update-install" type="button" hidden><i data-lucide="download" aria-hidden="true"></i>&#19968;&#38190;&#19979;&#36733;&#23433;&#35013;</button>
+              </div>
+            </article>
+            <div class="app-update-version-grid">
+              <article><span>&#24403;&#21069;&#29256;&#26412;</span><strong id="update-current-version">v--</strong></article>
+              <article><span>GitHub &#26368;&#26032;&#29256;</span><strong id="update-latest-version">--</strong></article>
+              <article><span>&#26356;&#26032;&#32593;&#32476;</span><strong id="update-network">--</strong></article>
+              <article><span>&#26816;&#27979;&#26102;&#38388;</span><strong id="update-checked-at">--</strong></article>
+            </div>
+            <article class="app-update-progress" id="update-progress" hidden>
+              <div><strong id="update-progress-text">&#27491;&#22312;&#36830;&#25509;&#19979;&#36733;&#26381;&#21153;&#22120;...</strong><span>&#25903;&#25345;&#26029;&#32447;&#33258;&#21160;&#37325;&#36830;&#19982;&#32493;&#20256;</span></div>
+              <div class="app-update-progress-track"><span id="update-progress-bar"></span></div>
+            </article>
+            <article class="app-update-notes">
+              <div class="app-update-notes-head"><i data-lucide="notebook-tabs" aria-hidden="true"></i><h3>&#26356;&#26032;&#20869;&#23481;</h3></div>
+              <pre id="update-release-notes">&#27491;&#22312;&#33719;&#21462; GitHub Release &#26356;&#26032;&#35828;&#26126;...</pre>
+            </article>
+          </div>
+        </section>
         <section class="view" id="view-system"><div class="settings-grid">
 <article class="storage-settings-card" id="ui-locale-card">
   <div class="storage-settings-head">
@@ -1415,7 +1442,7 @@
   </form></dialog><dialog id="add-app-dialog"><div class="dialog-head"><div><h2>&#28155;&#21152;&#24212;&#29992;</h2><p>&#20174;&#26412;&#22320;&#30446;&#24405;&#25110; Chrome &#24212;&#29992;&#21830;&#24215;&#28155;&#21152;</p></div><button id="close-add-app">&times;</button></div><div class="store-source-tabs"><button class="outline" id="choose-extension-folder">&#23433;&#35013;&#21253;&#30446;&#24405;</button><button class="primary" type="button">Chrome &#24212;&#29992;&#21830;&#24215;</button></div><label>Chrome &#24212;&#29992;&#21830;&#24215; URL<input id="chrome-store-url" placeholder="https://chromewebstore.google.com/detail/.../extension-id"></label><label class="assign-item"><input id="store-assign-all" type="checkbox" checked> &#28155;&#21152;&#21040;&#25152;&#26377;&#29615;&#22659;&#24182;&#37325;&#21551;&#27491;&#22312;&#36816;&#34892;&#30340;&#29615;&#22659;</label><p class="store-note">&#21482;&#25509;&#21463; Chrome Web Store &#38142;&#25509;&#65307;&#19979;&#36733;&#21518;&#20250;&#26657;&#39564; CRX &#26684;&#24335;&#21644;&#25991;&#20214;&#36335;&#24452;&#12290;</p><div class="dialog-actions"><button class="outline" id="cancel-add-app">&#21462;&#28040;</button><button class="primary" id="add-store-submit">&#30830;&#23450;&#28155;&#21152;</button></div></dialog><div class="toast" id="toast"></div>
   <script src="environment-audit.js?v=20260719-environment-audit"></script>
   <script src="assets/vendor/lucide.min.js"></script>
-  <script src="renderer.js?v=20260720-v1.0.2-local"></script>
+  <script src="renderer.js?v=20260813-v1.0.2-update"></script>
   <script src="ai-renderer.js?v=20260725-ai-v1"></script>
 </body>
 </html>

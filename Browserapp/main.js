@@ -155,29 +155,52 @@ function updateAssetName() {
   return UPDATE_ASSETS[updatePlatformKey()] || null;
 }
 
-/**
- * Electron's default session follows the operating-system proxy configuration,
- * including a local HTTP/SOCKS proxy and PAC rules. Keep global fetch only as a
- * development-host fallback.
- */
-function fetchAppUpdate(url, options = {}) {
-  const sessionFetch = session?.defaultSession?.fetch;
-  if (typeof sessionFetch === 'function') return sessionFetch.call(session.defaultSession, url, options);
-  return fetch(url, options);
+let appUpdateProxySignature = '';
+
+async function prepareAppUpdateNetwork({ force = false } = {}) {
+  const configured = await resolveSystemProxy().catch(() => ({ enabled: false, source: 'unavailable' }));
+  const updateSession = session.fromPartition('persist:aibrowser-updater', { cache: true });
+  let proxyConfig = { mode: 'system' };
+  if (configured?.pacUrl) {
+    proxyConfig = { mode: 'pac_script', pacScript: String(configured.pacUrl) };
+  } else if (configured?.enabled && configured?.raw) {
+    proxyConfig = {
+      mode: 'fixed_servers',
+      proxyRules: String(configured.raw),
+      proxyBypassRules: String(configured.bypass || ''),
+    };
+  }
+  const signature = JSON.stringify(proxyConfig);
+  if (force || signature !== appUpdateProxySignature) {
+    await updateSession.setProxy(proxyConfig);
+    appUpdateProxySignature = signature;
+    if (force) await updateSession.closeAllConnections().catch(() => {});
+  }
+  const route = await updateSession.resolveProxy(UPDATE_LATEST_HTML).catch(() => '');
+  const resolvedRoute = String(route || '').trim() || 'DIRECT';
+  return {
+    updateSession,
+    network: {
+      mode: /^DIRECT(?:;|$)/i.test(resolvedRoute) && !configured?.enabled ? 'direct' : 'system-proxy',
+      route: resolvedRoute,
+      source: String(configured?.source || 'electron-session'),
+      configured: Boolean(configured?.enabled || configured?.pacUrl),
+    },
+  };
+}
+
+async function fetchAppUpdate(url, options = {}) {
+  let prepared = await prepareAppUpdateNetwork();
+  try {
+    return await prepared.updateSession.fetch(url, options);
+  } catch (_) {
+    prepared = await prepareAppUpdateNetwork({ force: true });
+    return prepared.updateSession.fetch(url, options);
+  }
 }
 
 async function resolveAppUpdateNetwork() {
-  const [configured, route] = await Promise.all([
-    resolveSystemProxy().catch(() => ({ enabled: false, source: 'unavailable' })),
-    session?.defaultSession?.resolveProxy?.(UPDATE_LATEST_HTML).catch(() => ''),
-  ]);
-  const resolvedRoute = String(route || '').trim() || 'DIRECT';
-  const usesProxy = !/^DIRECT(?:;|$)/i.test(resolvedRoute) || Boolean(configured?.enabled);
-  return {
-    mode: usesProxy ? 'system-proxy' : 'direct',
-    route: resolvedRoute,
-    source: String(configured?.source || 'electron-session'),
-  };
+  return (await prepareAppUpdateNetwork()).network;
 }
 
 function compareVersions(left, right) {
@@ -388,6 +411,25 @@ async function resolveReleaseAsset(remoteVersion, assetName) {
   return null;
 }
 
+async function resolveTaggedRelease(remoteVersion) {
+  if (!remoteVersion) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_TIMEOUT_MS);
+  try {
+    const apiUrl = `${UPDATE_API_URL.replace(/\/latest$/, '')}/tags/v${encodeURIComponent(remoteVersion)}`;
+    const response = await fetchAppUpdate(apiUrl, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': updateUserAgent() },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    return response.json();
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** @deprecated use resolveLatestReleaseMeta — kept for download path compatibility */
 async function fetchUpdateRelease() {
   const meta = await resolveLatestReleaseMeta();
@@ -415,16 +457,21 @@ async function checkAppUpdate() {
   const remoteVersion = meta.remoteVersion;
   if (!remoteVersion) throw new Error('GitHub Release has no version tag');
   const upToDate = compareVersions(remoteVersion, currentVersion) <= 0;
+  const taggedRelease = meta.apiRelease || await resolveTaggedRelease(remoteVersion);
   let asset = null;
   if (assetName) {
-    asset = await resolveReleaseAsset(remoteVersion, assetName);
-    // Prefer API asset URL if present
-    if (meta.apiRelease && Array.isArray(meta.apiRelease.assets)) {
-      const fromApi = meta.apiRelease.assets.find((item) => item?.name === assetName);
+    if (taggedRelease && Array.isArray(taggedRelease.assets)) {
+      const fromApi = taggedRelease.assets.find((item) => item?.name === assetName);
       if (fromApi?.browser_download_url && updateUrlIsAllowed(fromApi.browser_download_url, assetName)) {
         asset = { name: fromApi.name, size: Number(fromApi.size) || 0, browser_download_url: fromApi.browser_download_url };
       }
     }
+    asset ||= await resolveReleaseAsset(remoteVersion, assetName);
+    asset ||= {
+      name: assetName,
+      size: 0,
+      browser_download_url: `https://github.com/${UPDATE_REPOSITORY}/releases/download/v${remoteVersion}/${assetName}`,
+    };
   }
   return {
     // supported = can show green/red for this build (always when we resolved a remote tag)
@@ -436,6 +483,8 @@ async function checkAppUpdate() {
     upToDate,
     releaseName: meta.releaseName || remoteVersion,
     releaseUrl: meta.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases`,
+    releaseNotes: String(taggedRelease?.body || '').trim(),
+    publishedAt: String(taggedRelease?.published_at || taggedRelease?.created_at || ''),
     platform: process.platform,
     arch: process.arch,
     source: meta.source || 'unknown',
@@ -451,53 +500,110 @@ async function downloadAppUpdate() {
   const downloadUrl = result.asset.browser_download_url
     || `https://github.com/${UPDATE_REPOSITORY}/releases/download/v${result.remoteVersion}/${result.asset.name}`;
   if (!updateUrlIsAllowed(downloadUrl, result.asset.name)) throw new Error('The selected update package URL is not trusted');
-  const controller = new AbortController();
-  // Idle timeout (reset on every received chunk) — a fixed wall-clock cap would
-  // abort large installer downloads on slow connections.
   const UPDATE_IDLE_TIMEOUT_MS = 120000;
-  let timer = setTimeout(() => controller.abort(), UPDATE_IDLE_TIMEOUT_MS);
-  const resetIdleTimer = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => controller.abort(), UPDATE_IDLE_TIMEOUT_MS);
-  };
+  const UPDATE_RETRY_LIMIT = 8;
   const extension = path.extname(result.asset.name).toLowerCase();
   const baseName = path.basename(result.asset.name, extension);
-  const temporaryPath = path.join(app.getPath('downloads'), `${baseName}-${randomUUID()}${extension}`);
-  let received = 0;
-  try {
-    const response = await fetchAppUpdate(downloadUrl, {
-      headers: { Accept: 'application/octet-stream', 'User-Agent': `AiBrowser/${app.getVersion()}` },
-      signal: controller.signal,
-    });
-    if (!response.ok || !response.body) throw new Error(`Update download failed (${response.status})`);
-    const contentLength = Number(response.headers.get('content-length')) || 0;
-    if (contentLength > UPDATE_MAX_BYTES) throw new Error('Update package is too large');
-    await fsp.mkdir(path.dirname(temporaryPath), { recursive: true });
-    const file = await fsp.open(temporaryPath, 'w');
-    try {
-      const reader = response.body.getReader();
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        resetIdleTimer();
-        received += chunk.value.byteLength;
-        if (received > UPDATE_MAX_BYTES) throw new Error('Update package is too large');
-        await file.write(Buffer.from(chunk.value));
-        emit({ type: 'app-update-progress', received, total: contentLength || result.asset.size || 0, percent: contentLength ? Math.min(100, Math.round(received / contentLength * 100)) : null, version: result.remoteVersion });
-      }
-    } finally {
-      await file.close();
-    }
-    emit({ type: 'app-update-progress', received, total: contentLength || result.asset.size || received, percent: 100, version: result.remoteVersion });
-    const openError = await shell.openPath(temporaryPath);
-    if (openError) shell.showItemInFolder(temporaryPath);
-    return { success: true, path: temporaryPath, version: result.remoteVersion, assetName: result.asset.name };
-  } catch (error) {
-    await fsp.rm(temporaryPath, { force: true }).catch(() => {});
-    throw error;
-  } finally {
-    clearTimeout(timer);
+  const finalPath = path.join(app.getPath('downloads'), `${baseName}-v${result.remoteVersion}${extension}`);
+  const partialPath = finalPath + '.part';
+  await fsp.mkdir(path.dirname(partialPath), { recursive: true });
+  let received = Number((await fsp.stat(partialPath).catch(() => null))?.size || 0);
+  let total = Number(result.asset.size) || 0;
+  if (received > UPDATE_MAX_BYTES || (total && received > total)) {
+    await fsp.rm(partialPath, { force: true });
+    received = 0;
   }
+  let lastError = null;
+  for (let attempt = 1; attempt <= UPDATE_RETRY_LIMIT && (!total || received < total); attempt += 1) {
+    const controller = new AbortController();
+    let idleTimer = setTimeout(() => controller.abort(), UPDATE_IDLE_TIMEOUT_MS);
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => controller.abort(), UPDATE_IDLE_TIMEOUT_MS);
+    };
+    try {
+      const headers = { Accept: 'application/octet-stream', 'User-Agent': `AiBrowser/${app.getVersion()}` };
+      if (received > 0) headers.Range = `bytes=${received}-`;
+      const response = await fetchAppUpdate(downloadUrl, { headers, signal: controller.signal });
+      if (response.status === 416 && total && received >= total) break;
+      if (![200, 206].includes(response.status) || !response.body) throw new Error(`Update download failed (${response.status})`);
+      const resumed = received > 0 && response.status === 206;
+      if (received > 0 && !resumed) {
+        received = 0;
+        await fsp.rm(partialPath, { force: true });
+      }
+      const contentRange = String(response.headers.get('content-range') || '');
+      const rangeTotal = Number(contentRange.match(/\/(\d+)$/)?.[1] || 0);
+      const contentLength = Number(response.headers.get('content-length')) || 0;
+      total = rangeTotal || (contentLength ? received + contentLength : total);
+      if (total > UPDATE_MAX_BYTES) throw new Error('Update package is too large');
+      const file = await fsp.open(partialPath, resumed ? 'a' : 'w');
+      try {
+        const reader = response.body.getReader();
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          resetIdleTimer();
+          received += chunk.value.byteLength;
+          if (received > UPDATE_MAX_BYTES) throw new Error('Update package is too large');
+          await file.write(Buffer.from(chunk.value));
+          emit({
+            type: 'app-update-progress',
+            phase: 'downloading',
+            received,
+            total: total || result.asset.size || 0,
+            percent: total ? Math.min(100, Math.round(received / total * 100)) : null,
+            version: result.remoteVersion,
+            attempt,
+          });
+        }
+      } finally {
+        await file.close();
+      }
+      if (total && received < total) throw new Error(`Download interrupted at ${received}/${total} bytes`);
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (/too large|not trusted/i.test(String(error?.message || error))) throw error;
+      if (attempt >= UPDATE_RETRY_LIMIT) break;
+      const retryIn = Math.min(30, 2 ** attempt);
+      emit({
+        type: 'app-update-retry',
+        attempt,
+        maxAttempts: UPDATE_RETRY_LIMIT,
+        retryIn,
+        received,
+        total,
+        version: result.remoteVersion,
+        message: String(error?.message || error),
+      });
+      await prepareAppUpdateNetwork({ force: true }).catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, retryIn * 1000));
+    } finally {
+      clearTimeout(idleTimer);
+    }
+  }
+  if (lastError || (total && received < total)) {
+    throw new Error(`更新下载中断，已保留 ${received} 字节供下次续传：${lastError?.message || '文件不完整'}`);
+  }
+  await fsp.rm(finalPath, { force: true }).catch(() => {});
+  await fsp.rename(partialPath, finalPath);
+  emit({ type: 'app-update-progress', phase: 'installing', received, total: total || received, percent: 100, version: result.remoteVersion });
+  if (process.platform === 'win32' && app.isPackaged) {
+    const installRoot = path.dirname(process.execPath);
+    const child = spawn(finalPath, ['/S', `/UPDATEPATH=${installRoot}`], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+    child.unref();
+    setTimeout(() => app.quit(), 1200);
+  } else {
+    const openError = await shell.openPath(finalPath);
+    if (openError) shell.showItemInFolder(finalPath);
+  }
+  return { success: true, path: finalPath, version: result.remoteVersion, assetName: result.asset.name };
 }
 
 
@@ -534,9 +640,12 @@ async function loadCachedAppUpdateStatus() {
       upToDate: Boolean(raw.upToDate),
       releaseName: raw.releaseName || raw.remoteVersion,
       releaseUrl: raw.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases`,
+      releaseNotes: String(raw.releaseNotes || ''),
+      publishedAt: String(raw.publishedAt || ''),
       platform: process.platform,
       arch: process.arch,
       source: raw.source || 'cache',
+      network: raw.network || null,
       asset: raw.asset || null,
       cachedAt: raw.checkedAt || null,
     };
@@ -557,6 +666,8 @@ async function saveCachedAppUpdateStatus(result) {
       canDownload: result.canDownload,
       releaseName: result.releaseName,
       releaseUrl: result.releaseUrl,
+      releaseNotes: result.releaseNotes || '',
+      publishedAt: result.publishedAt || '',
       source: result.source,
       network: result.network || null,
       asset: result.asset || null,
