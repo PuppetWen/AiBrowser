@@ -410,6 +410,14 @@ dialog[open] > .themed-select-menu {
 .app-update-notes-head { display: flex; align-items: center; gap: 9px; padding-bottom: 13px; border-bottom: 1px solid var(--ui-border); }
 .app-update-notes-head h3 { margin: 0; }
 .app-update-history { padding-bottom: 10px; }
+#update-release-history {
+  max-height: min(52vh, 640px);
+  padding-right: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
 .app-update-history-item { border-bottom: 1px solid var(--ui-border); }
 .app-update-history-item:last-child { border-bottom: 0; }
 .app-update-history-item summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 4px; cursor: pointer; list-style: none; user-select: none; }
