@@ -147,6 +147,93 @@ const UPDATE_ASSETS = Object.freeze({
 const UPDATE_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const UPDATE_TIMEOUT_MS = 20000;
 const UPDATE_ALLOWED_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
+const BUNDLED_RELEASE_HISTORY = Object.freeze([
+  {
+    version: '1.0.4',
+    name: 'AiBrowser v1.0.4',
+    publishedAt: '2026-08-13T14:59:58Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.4',
+    notes: [
+      '- 更新页面始终显示「GitHub 项目地址」按钮。',
+      '- 最新版时显示「当前已是最新版」；仅检测到新版本时替换为「更新安装」按钮。',
+      '- 「更新安装」恢复应用内代理下载、断线重连、HTTP Range 续传与原路径覆盖。',
+      '- 下载连接和进度区域仅在实际下载时显示。',
+      '- 保留历史版本折叠列表及独立滚动条。',
+    ].join('\n'),
+  },
+  {
+    version: '1.0.3',
+    name: 'AiBrowser v1.0.3',
+    publishedAt: '2026-08-13T13:28:02Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.3',
+    notes: [
+      '- 版本更新页面支持读取 GitHub 历史 Releases。',
+      '- 每个历史版本可独立展开或收起，最新版本默认展开。',
+      '- 每条记录显示版本号、发布日期、更新内容和 GitHub Release 入口。',
+      '- 历史更新区域增加独立纵向滚动条。',
+    ].join('\n'),
+  },
+  {
+    version: '1.0.2',
+    name: 'AiBrowser v1.0.2',
+    publishedAt: '2026-08-13T12:12:04Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.2',
+    notes: [
+      '- 新增侧边栏一级「版本更新」页面。',
+      '- 显示当前版本、GitHub 最新版本、代理路由、检测时间和 Release 更新内容。',
+      '- 更新流量使用独立 Electron 网络会话，支持 Windows 系统代理、本地代理和 PAC。',
+      '- 大文件使用 .part 文件、HTTP Range 续传和自动重连。',
+      '- 安装器识别现有安装路径并原位覆盖，桌面快捷方式改为可选组件。',
+      '- 左下角版本号改为从程序清单动态读取。',
+    ].join('\n'),
+  },
+  {
+    version: '1.0.1',
+    name: 'AiBrowser v1.0.1',
+    publishedAt: '2026-08-12T07:55:04Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.1',
+    notes: [
+      '- 修复删除分组后再次新建时，分组名称和备注无法输入的问题。',
+      '- 左下角新增当前版本和 GitHub 最新版状态点。',
+      '- 悬停状态点可查看版本、检测时间和更新网络详情。',
+      '- 更新检查与安装包下载支持 Windows 本地/系统代理及 PAC。',
+    ].join('\n'),
+  },
+  {
+    version: '1.0.0',
+    name: 'AiBrowser v1.0.0',
+    publishedAt: '2026-08-08T03:53:08Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.0',
+    notes: [
+      '- AiBrowser 首个公开 Windows x86-64 版本。',
+      '- 支持 Chromium 与 Firefox 隔离浏览器环境。',
+      '- 支持多窗口鼠标、键盘、文本、标签页及浏览器界面同步。',
+      '- 支持中文输入法组合状态，避免拼音输入被提前打断。',
+      '- 支持等大小平铺、层叠和 Excel 风格自定义网格布局。',
+      '- 包含代理配置、自动化、本地 API/MCP 和可选 AI 集成。',
+      '- 安装包和便携包内置所需运行时，不需要额外安装浏览器或依赖。',
+    ].join('\n'),
+  },
+]);
+
+function mergeReleaseHistory(onlineHistory = []) {
+  const merged = new Map();
+  for (const release of [...onlineHistory, ...BUNDLED_RELEASE_HISTORY]) {
+    const version = normalizeRemoteTag(release?.version || '');
+    if (!version) continue;
+    const previous = merged.get(version);
+    const bundled = BUNDLED_RELEASE_HISTORY.find((item) => item.version === version);
+    merged.set(version, {
+      version,
+      name: String(release?.name || previous?.name || bundled?.name || `AiBrowser v${version}`),
+      notes: String(release?.notes || previous?.notes || bundled?.notes || '').trim(),
+      publishedAt: String(release?.publishedAt || previous?.publishedAt || bundled?.publishedAt || ''),
+      url: String(release?.url || previous?.url || bundled?.url || `https://github.com/${UPDATE_REPOSITORY}/releases/tag/v${version}`),
+      prerelease: Boolean(release?.prerelease || previous?.prerelease),
+    });
+  }
+  return [...merged.values()].sort((left, right) => compareVersions(right.version, left.version));
+}
 
 function updatePlatformKey() {
   return `${process.platform}:${process.arch}`;
@@ -519,14 +606,14 @@ async function checkAppUpdate() {
     releaseUrl: meta.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases`,
     releaseNotes: String(taggedRelease?.body || '').trim(),
     publishedAt: String(taggedRelease?.published_at || taggedRelease?.created_at || ''),
-    history: releaseHistory.length ? releaseHistory : [{
+    history: mergeReleaseHistory(releaseHistory.length ? releaseHistory : [{
       version: remoteVersion,
       name: meta.releaseName || remoteVersion,
       notes: String(taggedRelease?.body || '').trim(),
       publishedAt: String(taggedRelease?.published_at || taggedRelease?.created_at || ''),
       url: meta.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases/tag/v${remoteVersion}`,
       prerelease: Boolean(taggedRelease?.prerelease),
-    }],
+    }]),
     platform: process.platform,
     arch: process.arch,
     source: meta.source || 'unknown',
@@ -684,7 +771,7 @@ async function loadCachedAppUpdateStatus() {
       releaseUrl: raw.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases`,
       releaseNotes: String(raw.releaseNotes || ''),
       publishedAt: String(raw.publishedAt || ''),
-      history: Array.isArray(raw.history) ? raw.history : [],
+      history: mergeReleaseHistory(Array.isArray(raw.history) ? raw.history : []),
       platform: process.platform,
       arch: process.arch,
       source: raw.source || 'cache',

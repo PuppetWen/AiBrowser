@@ -4949,6 +4949,8 @@ function renderAppUpdateHistory(status = {}) {
     details.className = 'app-update-history-item';
     details.open = index === 0;
     const summary = document.createElement('summary');
+    summary.setAttribute('aria-label', tx(`展开或收起 v${release.version || '--'} 更新内容`));
+    summary.title = tx('点击展开或收起更新内容');
     const title = element('span', 'app-update-history-title');
     title.append(element('strong', '', `v${release.version || '--'}`));
     if (release.name && !String(release.name).includes(String(release.version || ''))) {
@@ -4957,7 +4959,9 @@ function renderAppUpdateHistory(status = {}) {
     const meta = element('span', 'app-update-history-meta');
     if (index === 0) meta.append(element('em', '', tx('最新')));
     if (release.publishedAt) meta.append(element('time', '', new Date(release.publishedAt).toLocaleDateString()));
-    summary.append(title, meta);
+    const toggleLabel = element('span', 'app-update-history-toggle', details.open ? tx('收起') : tx('展开'));
+    details.addEventListener('toggle', () => { toggleLabel.textContent = details.open ? tx('收起') : tx('展开'); });
+    summary.append(title, meta, toggleLabel);
     const body = document.createElement('div');
     body.className = 'app-update-history-body';
     const notes = document.createElement('pre');
