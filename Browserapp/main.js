@@ -134,6 +134,7 @@ const localSettingsFile = path.join(app.getPath('userData'), 'openbrowser-local-
 
 const UPDATE_REPOSITORY = 'PuppetWen/AiBrowser';
 const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`;
+const UPDATE_HISTORY_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases?per_page=30`;
 const UPDATE_LATEST_HTML = `https://github.com/${UPDATE_REPOSITORY}/releases/latest`;
 const UPDATE_RELEASES_ATOM = `https://github.com/${UPDATE_REPOSITORY}/releases.atom`;
 const UPDATE_ASSETS = Object.freeze({
@@ -430,6 +431,35 @@ async function resolveTaggedRelease(remoteVersion) {
   }
 }
 
+async function resolveReleaseHistory() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_TIMEOUT_MS);
+  try {
+    const response = await fetchAppUpdate(UPDATE_HISTORY_API_URL, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': updateUserAgent() },
+      signal: controller.signal,
+    });
+    if (!response.ok) return [];
+    const releases = await response.json();
+    if (!Array.isArray(releases)) return [];
+    return releases
+      .filter((release) => release && !release.draft)
+      .map((release) => ({
+        version: normalizeRemoteTag(release.tag_name || release.name || ''),
+        name: String(release.name || release.tag_name || ''),
+        notes: String(release.body || '').trim(),
+        publishedAt: String(release.published_at || release.created_at || ''),
+        url: String(release.html_url || ''),
+        prerelease: Boolean(release.prerelease),
+      }))
+      .filter((release) => release.version && updateUrlIsAllowed(release.url || `https://github.com/${UPDATE_REPOSITORY}/releases/tag/v${release.version}`));
+  } catch (_) {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** @deprecated use resolveLatestReleaseMeta — kept for download path compatibility */
 async function fetchUpdateRelease() {
   const meta = await resolveLatestReleaseMeta();
@@ -457,7 +487,11 @@ async function checkAppUpdate() {
   const remoteVersion = meta.remoteVersion;
   if (!remoteVersion) throw new Error('GitHub Release has no version tag');
   const upToDate = compareVersions(remoteVersion, currentVersion) <= 0;
-  const taggedRelease = meta.apiRelease || await resolveTaggedRelease(remoteVersion);
+  const [taggedReleaseFallback, releaseHistory] = await Promise.all([
+    meta.apiRelease ? Promise.resolve(meta.apiRelease) : resolveTaggedRelease(remoteVersion),
+    resolveReleaseHistory(),
+  ]);
+  const taggedRelease = taggedReleaseFallback;
   let asset = null;
   if (assetName) {
     if (taggedRelease && Array.isArray(taggedRelease.assets)) {
@@ -485,6 +519,14 @@ async function checkAppUpdate() {
     releaseUrl: meta.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases`,
     releaseNotes: String(taggedRelease?.body || '').trim(),
     publishedAt: String(taggedRelease?.published_at || taggedRelease?.created_at || ''),
+    history: releaseHistory.length ? releaseHistory : [{
+      version: remoteVersion,
+      name: meta.releaseName || remoteVersion,
+      notes: String(taggedRelease?.body || '').trim(),
+      publishedAt: String(taggedRelease?.published_at || taggedRelease?.created_at || ''),
+      url: meta.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases/tag/v${remoteVersion}`,
+      prerelease: Boolean(taggedRelease?.prerelease),
+    }],
     platform: process.platform,
     arch: process.arch,
     source: meta.source || 'unknown',
@@ -642,6 +684,7 @@ async function loadCachedAppUpdateStatus() {
       releaseUrl: raw.releaseUrl || `https://github.com/${UPDATE_REPOSITORY}/releases`,
       releaseNotes: String(raw.releaseNotes || ''),
       publishedAt: String(raw.publishedAt || ''),
+      history: Array.isArray(raw.history) ? raw.history : [],
       platform: process.platform,
       arch: process.arch,
       source: raw.source || 'cache',
@@ -668,6 +711,7 @@ async function saveCachedAppUpdateStatus(result) {
       releaseUrl: result.releaseUrl,
       releaseNotes: result.releaseNotes || '',
       publishedAt: result.publishedAt || '',
+      history: Array.isArray(result.history) ? result.history : [],
       source: result.source,
       network: result.network || null,
       asset: result.asset || null,
@@ -2234,6 +2278,12 @@ app.whenReady().then(async () => {
   }));
   registerTrustedIpc('app:update-check', () => pushAppUpdateStatus({ check: true }));
   registerTrustedIpc('app:update-download', () => downloadAppUpdate());
+  registerTrustedIpc('app:update-open-release', async (_event, releaseUrl) => {
+    const target = String(releaseUrl || lastAppUpdateStatus?.releaseUrl || '').trim();
+    if (!target || !updateUrlIsAllowed(target)) throw new Error('The selected release URL is not trusted');
+    await shell.openExternal(target);
+    return { success: true, url: target };
+  });
   registerTrustedIpc('system:set-ui-chrome', (_event, payload) => {
     const win = BrowserWindow.fromWebContents(_event.sender) || mainWindow;
     const themeId = typeof payload === 'string' ? payload : String(payload?.themeId || '');

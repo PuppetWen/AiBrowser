@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('ops', Object.freeze({
   getInfo: () => ipcRenderer.invoke('system:info'),
   appUpdateCheck: () => ipcRenderer.invoke('app:update-check'),
   appUpdateDownload: () => ipcRenderer.invoke('app:update-download'),
+  appUpdateOpenRelease: (url) => ipcRenderer.invoke('app:update-open-release', String(url || '')),
   setUiChrome: (payload) => ipcRenderer.invoke('system:set-ui-chrome', payload),
   setSyncFloatingEnabled: (enabled) => ipcRenderer.invoke('system:set-sync-floating', Boolean(enabled)),
   kernelStatus: () => ipcRenderer.invoke('kernel:status'),

@@ -4891,24 +4891,35 @@ function renderAppUpdateStatus(status = {}) {
   const stateText = document.getElementById('update-state-text');
   const network = document.getElementById('update-network');
   const checked = document.getElementById('update-checked-at');
-  const notes = document.getElementById('update-release-notes');
-  const install = document.getElementById('update-install');
   const check = document.getElementById('update-check');
   const progress = document.getElementById('update-progress');
   const progressBar = document.getElementById('update-progress-bar');
   const progressText = document.getElementById('update-progress-text');
   if (current) current.textContent = `v${appUpdateUi.status.currentVersion || '--'}`;
   if (latest) latest.textContent = appUpdateUi.status.remoteVersion ? `v${appUpdateUi.status.remoteVersion}` : '--';
-  if (stateText) stateText.textContent = state === 'green' ? tx('当前已是最新版') : (state === 'red' ? tx('检测到新版本') : (state === 'checking' ? tx('正在检测版本...') : tx('版本检测失败')));
+  if (stateText) {
+    stateText.replaceChildren();
+    stateText.classList.toggle('has-update-link', state === 'red');
+    if (state === 'red') {
+      const updateLink = document.createElement('button');
+      updateLink.type = 'button';
+      updateLink.className = 'primary app-update-release-link';
+      updateLink.disabled = !appUpdateUi.status.releaseUrl;
+      updateLink.textContent = tx('前往 GitHub 更新安装');
+      updateLink.addEventListener('click', async () => {
+        try { await window.ops.appUpdateOpenRelease(appUpdateUi.status.releaseUrl); }
+        catch (error) { toast(tx('打开 GitHub 失败：') + (error?.message || error)); }
+      });
+      stateText.append(updateLink);
+    } else {
+      stateText.textContent = state === 'green' ? tx('当前已是最新版') : (state === 'checking' ? tx('正在检测版本...') : tx('版本检测失败'));
+    }
+  }
   if (network) network.textContent = appUpdateUi.status.network?.mode === 'system-proxy'
     ? `${tx('本地代理')} · ${appUpdateUi.status.network.route || appUpdateUi.status.network.source || '--'}`
     : tx('本地直连');
   if (checked) checked.textContent = appUpdateUi.status.checkedAt ? new Date(appUpdateUi.status.checkedAt).toLocaleString() : '--';
-  if (notes) notes.textContent = appUpdateUi.status.releaseNotes || tx('该版本暂未提供更新说明。');
-  if (install) {
-    install.hidden = !(state === 'red' && appUpdateUi.status.canDownload);
-    install.disabled = appUpdateUi.downloading || appUpdateUi.checking;
-  }
+  renderAppUpdateHistory(appUpdateUi.status);
   if (check) check.disabled = appUpdateUi.downloading || appUpdateUi.checking;
   if (progress) progress.hidden = !appUpdateUi.downloading;
   const percent = Number(appUpdateUi.status.progress);
@@ -4918,6 +4929,54 @@ function renderAppUpdateStatus(status = {}) {
       ? tx(`网络中断，${appUpdateUi.retry.retryIn} 秒后进行第 ${appUpdateUi.retry.attempt + 1}/${appUpdateUi.retry.maxAttempts} 次重连，已下载内容会保留`)
       : (Number.isFinite(percent) ? tx(`正在下载 ${percent}%`) : tx('正在连接下载服务器...'));
   }
+}
+
+function renderAppUpdateHistory(status = {}) {
+  const host = document.getElementById('update-release-history');
+  if (!host) return;
+  host.replaceChildren();
+  const fallback = status.remoteVersion ? [{
+    version: status.remoteVersion,
+    name: status.releaseName || `v${status.remoteVersion}`,
+    notes: status.releaseNotes || '',
+    publishedAt: status.publishedAt || '',
+    url: status.releaseUrl || '',
+  }] : [];
+  const releases = Array.isArray(status.history) && status.history.length ? status.history : fallback;
+  if (!releases.length) {
+    host.append(element('p', 'app-update-history-empty', tx('尚未获取到版本历史。')));
+    return;
+  }
+  releases.forEach((release, index) => {
+    const details = document.createElement('details');
+    details.className = 'app-update-history-item';
+    details.open = index === 0;
+    const summary = document.createElement('summary');
+    const title = element('span', 'app-update-history-title');
+    title.append(element('strong', '', `v${release.version || '--'}`));
+    if (release.name && !String(release.name).includes(String(release.version || ''))) {
+      title.append(element('span', '', release.name));
+    }
+    const meta = element('span', 'app-update-history-meta');
+    if (index === 0) meta.append(element('em', '', tx('最新')));
+    if (release.publishedAt) meta.append(element('time', '', new Date(release.publishedAt).toLocaleDateString()));
+    summary.append(title, meta);
+    const body = document.createElement('div');
+    body.className = 'app-update-history-body';
+    const notes = document.createElement('pre');
+    notes.textContent = release.notes || tx('该版本暂未提供更新说明。');
+    body.append(notes);
+    if (release.url) {
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'outline app-update-history-link';
+      link.textContent = tx('查看 GitHub Release');
+      link.addEventListener('click', () => window.ops.appUpdateOpenRelease(release.url).catch((error) => toast(error?.message || error)));
+      body.append(link);
+    }
+    details.append(summary, body);
+    host.append(details);
+  });
 }
 
 async function checkLatestAppUpdate() {
@@ -4957,7 +5016,6 @@ async function downloadLatestAppUpdate() {
 }
 
 document.getElementById('update-check')?.addEventListener('click', checkLatestAppUpdate);
-document.getElementById('update-install')?.addEventListener('click', downloadLatestAppUpdate);
 
 window.ops.onEvent((value) => {
   if (value?.type === 'app-update-status') renderAppUpdateStatus(value);
