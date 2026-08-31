@@ -33,6 +33,14 @@ const { validateDataRootIsolationSecure, ensureDataRootIsolationSecure, assertPr
 const { rebasePortablePath } = require('./portable-paths');
 const { parseProxy } = require('./proxy-forwarder');
 const { resolveSystemProxy } = require('./automation/system-proxy');
+const {
+  PET_PHASES,
+  PET_MOTION_MODES,
+  PET_MOTIONS,
+  DEFAULT_PET_CONFIG,
+  normalizePetConfig,
+  petWindowSize,
+} = require('./pet-config');
 const hostRoamingAppData = String(process.env.APPDATA || '').trim();
 const hostStartMenuPrograms = String(process.env.OPENBROWSER_START_MENU_PROGRAMS || '').trim()
   || (hostRoamingAppData
@@ -131,6 +139,19 @@ if (portableSourceMode) {
 
 const defaultProfileDataRoot = path.join(app.getPath('userData'), 'browser-profiles-v2');
 const localSettingsFile = path.join(app.getPath('userData'), 'openbrowser-local-settings.json');
+const petAssetRoot = path.join(__dirname, 'assets', 'pets');
+const petRuntimeRoot = path.join(__dirname, 'pet-runtime');
+const BUNDLED_PET_IDS = Object.freeze([
+  'mmd-bianca',
+  'mmd-bianca-saint',
+  'mmd-emden',
+  'mmd-lilith',
+  'mmd-odette',
+  'mmd-qingxiao',
+  'mmd-robin',
+  'mmd-thoth-black',
+  'mmd-thoth-white',
+]);
 
 const UPDATE_REPOSITORY = 'PuppetWen/AiBrowser';
 const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`;
@@ -923,16 +944,19 @@ let localSettingsCache = {
   cloud: cloudSync.defaultCloudConfig(),
   uiGroups: [],
   syncFloatingEnabled: false,
+  pet: normalizePetConfig(DEFAULT_PET_CONFIG, BUNDLED_PET_IDS),
 };
 
 async function loadLocalSettings() {
   try {
     const saved = JSON.parse(await fsp.readFile(localSettingsFile, 'utf8'));
+    const savedPet = { ...(saved.pet || DEFAULT_PET_CONFIG) };
     localSettingsCache = {
       profileDataRoot: normalizeProfileDataRoot(saved.profileDataRoot),
       cloud: { ...cloudSync.defaultCloudConfig(), ...(saved.cloud || {}) },
       uiGroups: Array.isArray(saved.uiGroups) ? saved.uiGroups : [],
       syncFloatingEnabled: saved.syncFloatingEnabled === true,
+      pet: normalizePetConfig(savedPet, BUNDLED_PET_IDS),
     };
     return localSettingsCache;
   } catch (_) {
@@ -941,6 +965,7 @@ async function loadLocalSettings() {
       cloud: cloudSync.defaultCloudConfig(),
       uiGroups: [],
       syncFloatingEnabled: false,
+      pet: normalizePetConfig(DEFAULT_PET_CONFIG, BUNDLED_PET_IDS),
     };
     return localSettingsCache;
   }
@@ -952,10 +977,11 @@ async function saveLocalSettings(value, options = {}) {
     cloud: value.cloud || localSettingsCache.cloud || cloudSync.defaultCloudConfig(),
     uiGroups: Array.isArray(value.uiGroups) ? value.uiGroups : (localSettingsCache.uiGroups || []),
     syncFloatingEnabled: value.syncFloatingEnabled === true,
+    pet: normalizePetConfig(value.pet || localSettingsCache.pet || DEFAULT_PET_CONFIG, BUNDLED_PET_IDS),
   };
   await fsp.mkdir(path.dirname(localSettingsFile), { recursive: true });
   const temporary = localSettingsFile + '.tmp';
-  await fsp.writeFile(temporary, JSON.stringify({ version: 3, ...localSettingsCache }, null, 2), 'utf8');
+  await fsp.writeFile(temporary, JSON.stringify({ version: 6, ...localSettingsCache }, null, 2), 'utf8');
   await fsp.rm(localSettingsFile, { force: true });
   await fsp.rename(temporary, localSettingsFile);
 }
@@ -1180,6 +1206,19 @@ let syncState = { active: false, master: null, selected: [] };
 const windows = new Set();
 let mainWindow = null;
 let syncFloatingWindow = null;
+let petWindow = null;
+let petDragSession = null;
+let petPhase = 'waiting';
+let petPhaseTimer = null;
+let petStartupLoading = true;
+let petRendererState = {};
+let petScalePersistTimer = null;
+let petScaleCenterAnchor = null;
+let petInputPassthroughTimer = null;
+let petInputIgnored = null;
+let petSessionHardened = false;
+const activeAgentStates = new Map();
+const activeRpaTasks = new Set();
 let currentUiTheme = { themeId: 'pixel-workstation', colorMode: 'dark' };
 
 function trustedAppIndexUrl() {
@@ -1215,6 +1254,21 @@ function assertSyncFloatingSender(event) {
   }
 }
 
+function trustedPetUrl() {
+  return pathToFileURL(path.join(__dirname, 'pet.html')).href;
+}
+
+function assertPetSender(event) {
+  if (!petWindow || petWindow.isDestroyed() || event?.sender !== petWindow.webContents) {
+    throw new Error('untrusted pet IPC sender');
+  }
+  const senderUrl = String(event.sender.getURL?.() || '');
+  const expected = trustedPetUrl();
+  if (senderUrl !== expected && !senderUrl.startsWith(expected + '?') && !senderUrl.startsWith(expected + '#')) {
+    throw new Error('untrusted pet document');
+  }
+}
+
 function registerTrustedIpc(channel, handler) {
   ipcMain.handle(channel, (event, ...args) => {
     assertTrustedIpcSender(event);
@@ -1233,6 +1287,7 @@ function sanitizeIds(value) {
 }
 
 function emit(value) {
+  handlePetObservableEvent(value);
   for (const win of windows) if (!win.isDestroyed()) win.webContents.send('engine:event', value);
   if (syncFloatingWindow && !syncFloatingWindow.isDestroyed()) {
     syncFloatingWindow.webContents.send('sync-floating:event', value);
@@ -1912,6 +1967,811 @@ function applyWindowChrome(win, themeId, colorMode) {
   }
 }
 
+let bundledPetCatalogCache = null;
+
+function bundledPetCatalog() {
+  if (bundledPetCatalogCache) return bundledPetCatalogCache;
+  bundledPetCatalogCache = BUNDLED_PET_IDS.map((id) => {
+    const root = path.join(petAssetRoot, id);
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'pet.json'), 'utf8'));
+    const source = manifest.mmd3d || {};
+    const modelKind = String(source.model || '').toLowerCase().endsWith('.glb') ? 'humanoid' : 'pmx';
+    const motionClips = Object.fromEntries(PET_PHASES.map(({ id: phase }) => {
+      const clips = PET_MOTIONS.filter((motion) => motion.phase === phase).map((motion) => {
+        const authored = source.motionSets?.[phase]?.[motion.index];
+        if (!authored || !Array.isArray(authored.files) || !authored.files.length) {
+          throw new Error(`Pet ${id} is missing motion ${motion.id}`);
+        }
+        return {
+          id: motion.id,
+          label: motion.label,
+          urls: authored.files.map((file) => pathToFileURL(path.join(root, String(file))).href),
+          endFrame: motion.maxEndFrame
+            ? Math.min(Number(authored.endFrame) || motion.maxEndFrame, motion.maxEndFrame)
+            : authored.endFrame,
+        };
+      });
+      return [phase, clips];
+    }));
+    return {
+      id,
+      displayName: String(manifest.displayName || id).replace(/（3D）$/, ''),
+      description: String(manifest.description || ''),
+      vendorScript: pathToFileURL(path.join(
+        petRuntimeRoot,
+        modelKind === 'humanoid' ? 'mmd-humanoid-vendor.js' : 'mmd-pmx-vendor.js'
+      )).href,
+      runtime: {
+        modelUrl: pathToFileURL(path.join(root, String(source.model || 'model.pmx'))).href,
+        modelKind,
+        scale: source.scale,
+        translate: source.translate,
+        cameraYaw: source.cameraYaw,
+        motionScale: source.motionScale,
+        physics: source.physics === true,
+        motionClips,
+        renderFps: Number(source.renderFps) || 30,
+        motionCacheSize: Number(source.motionCacheSize) || 2,
+        viewportOverscan: PET_VIEWPORT_OVERSCAN,
+        boneMap: source.boneMap,
+        secondaryMotion: source.secondaryMotion,
+      },
+    };
+  });
+  return bundledPetCatalogCache;
+}
+
+function sendPetEvent(value) {
+  if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send('pet:event', value);
+}
+
+function derivePetPhase() {
+  if (petStartupLoading) return 'waiting';
+  if ([...activeAgentStates.values()].includes('tool') || activeRpaTasks.size) return 'tool';
+  if (activeAgentStates.size) return 'thinking';
+  if (syncState.active || (engine?.running?.size || 0) > 0) return 'review';
+  return 'idle';
+}
+
+function setPetPhase(next, transientMs = 0) {
+  if (!PET_PHASES.some((phase) => phase.id === next)) return;
+  if (petPhaseTimer) {
+    clearTimeout(petPhaseTimer);
+    petPhaseTimer = null;
+  }
+  petPhase = next;
+  sendPetEvent({ type: 'phase', phase: next });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('engine:event', { type: 'pet-phase', phase: next });
+  }
+  if (transientMs > 0) {
+    petPhaseTimer = setTimeout(() => {
+      petPhaseTimer = null;
+      setPetPhase(derivePetPhase());
+    }, transientMs);
+  }
+}
+
+function handlePetObservableEvent(value) {
+  if (!value || typeof value !== 'object') return;
+  if (value.type === 'agent-state') {
+    const runId = String(value.runId || value.sessionId || 'agent');
+    if (value.state === 'tool' || value.state === 'thinking') {
+      activeAgentStates.set(runId, value.state);
+      setPetPhase(value.state);
+    } else {
+      activeAgentStates.delete(runId);
+      setPetPhase(value.state === 'failed' ? 'failed' : 'done', 2800);
+    }
+    return;
+  }
+  if (value.type === 'rpa-task') {
+    const taskId = String(value.taskId || 'rpa');
+    if (value.status === 'running') {
+      activeRpaTasks.add(taskId);
+      setPetPhase('tool');
+    } else {
+      activeRpaTasks.delete(taskId);
+      setPetPhase(value.status === 'success' ? 'done' : 'failed', 2800);
+    }
+    return;
+  }
+  if (value.type === 'profile-start-progress' || value.type === 'kernel-progress' || value.type === 'app-update-progress') {
+    setPetPhase('waiting');
+    return;
+  }
+  if (value.type === 'status') {
+    setPetPhase(value.running ? 'done' : 'failed', 2200);
+    return;
+  }
+  if (value.type === 'profile-stopped' || value.type === 'profile-closed') {
+    setPetPhase('failed', 2200);
+    return;
+  }
+  if (value.type === 'sync-state') {
+    setPetPhase(derivePetPhase());
+    return;
+  }
+  if (String(value.type || '').endsWith('-error') || value.type === 'browser-startup-failure') {
+    setPetPhase('failed', 3000);
+  }
+}
+
+function defaultPetPosition(size) {
+  const work = screen.getPrimaryDisplay().workArea;
+  const renderMarginX = size.width * (PET_VIEWPORT_OVERSCAN - 1) / 2;
+  const renderMarginY = size.height * (PET_VIEWPORT_OVERSCAN - 1) / 2;
+  return {
+    x: Math.round(work.x + work.width - size.width - renderMarginX - 24),
+    y: Math.round(work.y + work.height - size.height - renderMarginY - 24),
+  };
+}
+
+function visiblePetPosition(position, size) {
+  if (!position) return defaultPetPosition(size);
+  const visible = screen.getAllDisplays().some(({ bounds }) => {
+    const overlapWidth = Math.min(position.x + size.width, bounds.x + bounds.width) - Math.max(position.x, bounds.x);
+    const overlapHeight = Math.min(position.y + size.height, bounds.y + bounds.height) - Math.max(position.y, bounds.y);
+    return overlapWidth >= 48 && overlapHeight >= 48;
+  });
+  return visible ? position : defaultPetPosition(size);
+}
+
+const PET_HOST_SCALE = 1.6;
+const PET_VIEWPORT_OVERSCAN = 1.75;
+const PET_HOST_SIZE = petWindowSize(PET_HOST_SCALE);
+
+function petVisualOffset(scale) {
+  const size = petWindowSize(scale);
+  return {
+    x: Math.round((PET_HOST_SIZE.width - size.width) / 2),
+    y: Math.round((PET_HOST_SIZE.height - size.height) / 2),
+    ...size,
+  };
+}
+
+function petDesktopBounds() {
+  const displays = screen.getAllDisplays();
+  const left = Math.min(...displays.map(({ bounds }) => bounds.x));
+  const top = Math.min(...displays.map(({ bounds }) => bounds.y));
+  const right = Math.max(...displays.map(({ bounds }) => bounds.x + bounds.width));
+  const bottom = Math.max(...displays.map(({ bounds }) => bounds.y + bounds.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function updatePetInputPassthrough() {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const visualSize = petWindowSize(localSettingsCache.pet.scale);
+  const position = visiblePetPosition(localSettingsCache.pet.position, visualSize);
+  const cursor = screen.getCursorScreenPoint();
+  const inside = cursor.x >= position.x
+    && cursor.x < position.x + visualSize.width
+    && cursor.y >= position.y
+    && cursor.y < position.y + visualSize.height;
+  const ignored = !inside && !petDragSession;
+  if (ignored === petInputIgnored) return;
+  petInputIgnored = ignored;
+  petWindow.setIgnoreMouseEvents(ignored, { forward: false });
+}
+
+function startPetInputPassthrough() {
+  if (petInputPassthroughTimer) clearInterval(petInputPassthroughTimer);
+  petInputIgnored = null;
+  updatePetInputPassthrough();
+  petInputPassthroughTimer = setInterval(updatePetInputPassthrough, 32);
+}
+
+function stopPetInputPassthrough() {
+  if (petInputPassthroughTimer) clearInterval(petInputPassthroughTimer);
+  petInputPassthroughTimer = null;
+  petInputIgnored = null;
+}
+
+function applyPetWindowGeometry(win, scale, visualPosition) {
+  const visualSize = petWindowSize(scale);
+  const visiblePosition = visiblePetPosition(visualPosition, visualSize);
+  sendPetEvent({ type: 'position', position: visiblePosition, scale });
+  updatePetInputPassthrough();
+  return visiblePosition;
+}
+
+function freezePetScaleAtCurrentBounds() {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  petScaleCenterAnchor = null;
+  updatePetInputPassthrough();
+}
+
+async function persistInteractivePetScale() {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const pet = {
+    ...localSettingsCache.pet,
+  };
+  await saveLocalSettings({ ...localSettingsCache, pet });
+  notifyPetConfig();
+}
+
+function scheduleInteractivePetScale(deltaY) {
+  if (!petWindow || petWindow.isDestroyed()) return { success: false };
+  if (petDragSession) return { success: true, scale: localSettingsCache.pet.scale, ignoredWhileDragging: true };
+  const direction = Number(deltaY) > 0 ? -1 : 1;
+  const currentTarget = localSettingsCache.pet.scale;
+  const wheelStrength = Math.min(2, Math.max(0.45, Math.abs(Number(deltaY) || 100) / 100));
+  const targetScale = normalizePetConfig({
+    ...localSettingsCache.pet,
+    scale: currentTarget + direction * 0.04 * wheelStrength,
+  }, BUNDLED_PET_IDS).scale;
+  if (targetScale === currentTarget) return { success: true, scale: targetScale };
+
+  const currentSize = petWindowSize(currentTarget);
+  const targetSize = petWindowSize(targetScale);
+  const currentPosition = visiblePetPosition(localSettingsCache.pet.position, currentSize);
+  if (!petScaleCenterAnchor) {
+    petScaleCenterAnchor = {
+      x: currentPosition.x + currentSize.width / 2,
+      y: currentPosition.y + currentSize.height / 2,
+    };
+  }
+  localSettingsCache.pet = {
+    ...localSettingsCache.pet,
+    scale: targetScale,
+    position: {
+      x: Math.round(petScaleCenterAnchor.x - targetSize.width / 2),
+      y: Math.round(petScaleCenterAnchor.y - targetSize.height / 2),
+    },
+  };
+  updatePetInputPassthrough();
+  sendPetEvent({
+    type: 'scale',
+    scale: targetScale,
+    position: localSettingsCache.pet.position,
+  });
+  if (petScalePersistTimer) clearTimeout(petScalePersistTimer);
+  petScalePersistTimer = setTimeout(() => {
+    petScalePersistTimer = null;
+    void persistInteractivePetScale().catch((error) => console.warn('[desktop-pet] scale persistence failed:', error));
+  }, 260);
+  return { success: true, scale: targetScale };
+}
+
+async function createPetWindow() {
+  if (petWindow && !petWindow.isDestroyed()) return petWindow;
+  if (!petSessionHardened) {
+    const isolatedPetSession = session.fromPartition('aibrowser-pet');
+    isolatedPetSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_details, callback) => {
+      callback({ cancel: true });
+    });
+    petSessionHardened = true;
+  }
+  const config = localSettingsCache.pet;
+  const size = petWindowSize(config.scale);
+  const position = visiblePetPosition(config.position, size);
+  const desktopBounds = petDesktopBounds();
+  localSettingsCache.pet = { ...config, position };
+  const win = new BrowserWindow({
+    ...desktopBounds,
+    title: 'AiBrowser 3D 宠物',
+    frame: false,
+    thickFrame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    roundedCorners: false,
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'pet-preload.js'),
+      partition: 'aibrowser-pet',
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  petWindow = win;
+  try { win.setAlwaysOnTop(true, 'screen-saver', 1); } catch (_) {}
+  try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) {}
+  win.setMenu(null);
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('console-message', (event) => {
+    const severity = event?.level;
+    const text = event?.message;
+    if (Number(severity) < 2) return;
+    console.warn('[desktop-pet]', text || `renderer console level ${severity}`);
+  });
+  win.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.warn('[desktop-pet] load failed:', code, description, url);
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== trustedPetUrl()) event.preventDefault();
+  });
+  win.on('closed', () => {
+    if (petWindow === win) petWindow = null;
+    stopPetDragTracking();
+    stopPetInputPassthrough();
+    if (petScalePersistTimer) clearTimeout(petScalePersistTimer);
+    petScalePersistTimer = null;
+    petScaleCenterAnchor = null;
+  });
+  await win.loadFile(path.join(__dirname, 'pet.html'));
+  startPetInputPassthrough();
+  if (config.enabled && !win.isDestroyed()) win.showInactive();
+  return win;
+}
+
+function notifyPetConfig() {
+  const config = localSettingsCache.pet;
+  sendPetEvent({ type: 'config', config });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('engine:event', { type: 'pet-settings', config });
+  }
+}
+
+async function setPetConfig(partial = {}) {
+  if (petScalePersistTimer) clearTimeout(petScalePersistTimer);
+  petScalePersistTimer = null;
+  const current = localSettingsCache.pet || normalizePetConfig(DEFAULT_PET_CONFIG, BUNDLED_PET_IDS);
+  const merged = {
+    ...current,
+    ...(partial && typeof partial === 'object' ? partial : {}),
+    assignments: partial?.assignments
+      ? { ...current.assignments, ...partial.assignments }
+      : current.assignments,
+  };
+  let next = normalizePetConfig(merged, BUNDLED_PET_IDS);
+  if (partial?.position != null) petScaleCenterAnchor = null;
+  if (next.scale !== current.scale && partial?.position == null) {
+    const currentSize = petWindowSize(current.scale);
+    const nextSize = petWindowSize(next.scale);
+    const currentPosition = visiblePetPosition(current.position, currentSize);
+    if (!petScaleCenterAnchor) {
+      petScaleCenterAnchor = {
+        x: currentPosition.x + currentSize.width / 2,
+        y: currentPosition.y + currentSize.height / 2,
+      };
+    }
+    next = {
+      ...next,
+      position: {
+        x: Math.round(petScaleCenterAnchor.x - nextSize.width / 2),
+        y: Math.round(petScaleCenterAnchor.y - nextSize.height / 2),
+      },
+    };
+  }
+  next = {
+    ...next,
+    position: visiblePetPosition(next.position, petWindowSize(next.scale)),
+  };
+  await saveLocalSettings({ ...localSettingsCache, pet: next });
+  if (next.enabled) {
+    const win = await createPetWindow();
+    applyPetWindowGeometry(win, next.scale, next.position);
+    try { win.setAlwaysOnTop(true, 'screen-saver', 1); } catch (_) {}
+    if (!win.isVisible()) win.showInactive();
+  } else if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.hide();
+  }
+  notifyPetConfig();
+  return { success: true, config: localSettingsCache.pet };
+}
+
+async function runPetIntegrationSelftest(resultFile) {
+  const waitUntil = async (predicate, timeoutMs, label) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (predicate()) return;
+      await sleep(250);
+    }
+    throw new Error(`Timed out waiting for ${label}`);
+  };
+  const petCaptureBounds = () => {
+    const desktop = petDesktopBounds();
+    const size = petWindowSize(localSettingsCache.pet.scale);
+    const position = visiblePetPosition(localSettingsCache.pet.position, size);
+    const renderWidth = Math.round(size.width * PET_VIEWPORT_OVERSCAN);
+    const renderHeight = Math.round(size.height * PET_VIEWPORT_OVERSCAN);
+    const unclippedX = Math.round(position.x - desktop.x - (renderWidth - size.width) / 2);
+    const unclippedY = Math.round(position.y - desktop.y - (renderHeight - size.height) / 2);
+    const x = Math.max(0, unclippedX);
+    const y = Math.max(0, unclippedY);
+    const width = Math.max(1, Math.min(renderWidth - Math.max(0, -unclippedX), desktop.width - x));
+    const height = Math.max(1, Math.min(renderHeight - Math.max(0, -unclippedY), desktop.height - y));
+    return {
+      x,
+      y,
+      width,
+      height,
+      inputX: Math.round(position.x - desktop.x) - x,
+      inputY: Math.round(position.y - desktop.y) - y,
+      inputWidth: size.width,
+      inputHeight: size.height,
+    };
+  };
+  const capturePetFrame = (win) => {
+    const { x, y, width, height } = petCaptureBounds();
+    return win.webContents.capturePage({ x, y, width, height });
+  };
+  const captureVisiblePixels = async (win) => {
+    const frame = await capturePetFrame(win);
+    const bitmap = frame.toBitmap();
+    let visiblePixels = 0;
+    for (let offset = 3; offset < bitmap.length; offset += 4) {
+      if (bitmap[offset] >= 16) visiblePixels += 1;
+    }
+    return visiblePixels;
+  };
+  const result = { startedAt: new Date().toISOString(), checks: {}, snapshots: {} };
+  try {
+    const win = await createPetWindow();
+    const testDesktop = petDesktopBounds();
+    const testPetSize = petWindowSize(1);
+    await setPetConfig({
+      petId: 'mmd-bianca',
+      mode: 'by-state',
+      scale: 1,
+      position: {
+        x: Math.round(testDesktop.x + (testDesktop.width - testPetSize.width) / 2),
+        y: Math.round(testDesktop.y + (testDesktop.height - testPetSize.height) / 2),
+      },
+      assignments: { idle: ['idle:iris-out'] },
+    });
+    setPetPhase('idle');
+    await waitUntil(() => (petRendererState.petId === 'mmd-bianca' && petRendererState.phase === 'idle'
+      && petRendererState.modelReady) || petRendererState.modelError, 60000, 'initial pet model');
+    await sleep(750);
+    // Keep physical desktop input from contaminating synthetic drag/wheel
+    // measurements. This is a dedicated self-test process and exits on finish.
+    stopPetInputPassthrough();
+    win.setIgnoreMouseEvents(true, { forward: false });
+    await sleep(120);
+    result.snapshots.initialRenderer = { ...petRendererState };
+    result.snapshots.initialDom = await win.webContents.executeJavaScript(`(() => {
+      const status = document.getElementById('pet-status');
+      const canvas = document.querySelector('#pet-stage canvas');
+      return {
+        debug: window.__petDebugSnapshot(),
+        statusHidden: status.hidden,
+        statusOpacity: getComputedStyle(status).opacity,
+        bodyCursor: getComputedStyle(document.body).cursor,
+        hitboxCursor: getComputedStyle(document.getElementById('pet-hitbox')).cursor,
+        stagePointerEvents: getComputedStyle(document.getElementById('pet-stage')).pointerEvents,
+        canvasCount: document.querySelectorAll('#pet-stage canvas').length,
+        canvasSize: canvas ? { width: canvas.width, height: canvas.height, clientWidth: canvas.clientWidth, clientHeight: canvas.clientHeight } : null,
+      };
+    })()`);
+    const initialBounds = win.getBounds();
+    const mainBounds = mainWindow.getBounds();
+    result.checks.modelReady = petRendererState.modelReady === true && !petRendererState.modelError;
+    result.checks.alwaysOnTop = win.isAlwaysOnTop();
+    result.checks.independentWindow = typeof win.getParentWindow !== 'function' || win.getParentWindow() == null;
+    result.checks.inputHitboxExact = result.snapshots.initialDom.debug.inputBounds.x
+      === result.snapshots.initialDom.debug.visualPosition.x - testDesktop.x
+      && result.snapshots.initialDom.debug.inputBounds.y
+        === result.snapshots.initialDom.debug.visualPosition.y - testDesktop.y
+      && result.snapshots.initialDom.debug.inputBounds.width === testPetSize.width
+      && result.snapshots.initialDom.debug.inputBounds.height === testPetSize.height;
+    result.checks.desktopCursorIsolated = result.snapshots.initialDom.bodyCursor === 'default'
+      && result.snapshots.initialDom.hitboxCursor === 'grab'
+      && result.snapshots.initialDom.stagePointerEvents === 'none';
+    result.snapshots.settingsUi = await mainWindow.webContents.executeJavaScript(`(() => ({
+      foldable: document.querySelector('#desktop-pet-card > details.pet-settings-disclosure') instanceof HTMLDetailsElement,
+      modeValues: [...document.querySelectorAll('#pet-motion-mode option')].map(option => option.value),
+      multiselectCount: document.querySelectorAll('#pet-phase-config .pet-motion-multiselect').length,
+    }))()`);
+    result.checks.settingsFoldable = result.snapshots.settingsUi.foldable === true;
+    result.checks.threeMotionModes = result.snapshots.settingsUi.modeValues.join(',') === 'by-state,all-shuffle,all-random-once';
+    result.checks.compactStateMultiselects = result.snapshots.settingsUi.multiselectCount === PET_PHASES.length;
+
+    const screenshotFile = path.join(path.dirname(resultFile), 'pet-renderer.png');
+    const image = await win.webContents.capturePage();
+    const screenshotBitmap = image.toBitmap();
+    result.checks.transparentBackground = screenshotBitmap.length >= 4 && screenshotBitmap[3] === 0;
+    await fsp.mkdir(path.dirname(screenshotFile), { recursive: true });
+    await fsp.writeFile(screenshotFile, image.toPNG());
+    result.screenshot = screenshotFile;
+    const irisFrames = [];
+    for (let index = 0; index < 15; index += 1) {
+      const frame = await capturePetFrame(win);
+      const { width, height } = frame.getSize();
+      const bitmap = frame.toBitmap();
+      let visiblePixels = 0;
+      let visibleTopPixels = 0;
+      let whiteTopPixels = 0;
+      const topRows = Math.floor(height * 0.45);
+      for (let y = 0; y < topRows; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const offset = (y * width + x) * 4;
+          if (bitmap[offset + 3] < 16) continue;
+          visiblePixels += 1;
+          visibleTopPixels += 1;
+          if (bitmap[offset] > 238 && bitmap[offset + 1] > 238 && bitmap[offset + 2] > 238) whiteTopPixels += 1;
+        }
+      }
+      const frameFile = path.join(path.dirname(resultFile), `iris-out-${String(index + 1).padStart(2, '0')}.png`);
+      await fsp.writeFile(frameFile, frame.toPNG());
+      for (let y = topRows; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          if (bitmap[(y * width + x) * 4 + 3] >= 16) visiblePixels += 1;
+        }
+      }
+      irisFrames.push({
+        second: index,
+        visiblePixels,
+        visibleTopPixels,
+        whiteRatio: visibleTopPixels ? Number((whiteTopPixels / visibleTopPixels).toFixed(4)) : 1,
+        file: frameFile,
+      });
+      if (index < 14) await sleep(1000);
+    }
+    result.snapshots.irisOut = irisFrames;
+    const baselineWhite = irisFrames[0]?.whiteRatio || 0;
+    result.checks.irisOutPartsVisible = irisFrames.every((frame) => frame.visiblePixels > 1000);
+    result.checks.irisOutNoWhiteFlash = irisFrames.every((frame) => frame.whiteRatio <= Math.max(0.55, baselineWhite + 0.3));
+
+    const motionSamples = [];
+    for (const motion of PET_MOTIONS) {
+      await setPetConfig({
+        mode: 'by-state',
+        assignments: { [motion.phase]: [motion.id] },
+      });
+      setPetPhase(motion.phase);
+      await sleep(1400);
+      const captureBounds = petCaptureBounds();
+      const sample = await capturePetFrame(win);
+      const { width, height } = sample.getSize();
+      const bitmap = sample.toBitmap();
+      let visiblePixels = 0;
+      let outsideInputPixels = 0;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const offset = (y * width + x) * 4 + 3;
+          if (bitmap[offset] < 16) continue;
+          visiblePixels += 1;
+          if (x < captureBounds.inputX || x >= captureBounds.inputX + captureBounds.inputWidth
+            || y < captureBounds.inputY || y >= captureBounds.inputY + captureBounds.inputHeight) {
+            outsideInputPixels += 1;
+          }
+        }
+      }
+      const sampleFile = path.join(path.dirname(resultFile), `motion-${motion.id.replace(':', '-')}.png`);
+      await fsp.writeFile(sampleFile, sample.toPNG());
+      motionSamples.push({ id: motion.id, visiblePixels, outsideInputPixels, file: sampleFile });
+    }
+    result.snapshots.motionSamples = motionSamples;
+    result.checks.allMotionsVisible = motionSamples.length === PET_MOTIONS.length
+      && motionSamples.every((sample) => sample.visiblePixels > 1000);
+    result.checks.expandedActionViewport = motionSamples.some((sample) => sample.outsideInputPixels > 1000);
+    const beforeDragDebug = await win.webContents.executeJavaScript('window.__petDebugSnapshot()');
+    await win.webContents.executeJavaScript('window.desktopPet.beginDrag({ screenX: 200, screenY: 200, manual: true })');
+    const dragVisibleFrames = [];
+    for (let step = 1; step <= 6; step += 1) {
+      await win.webContents.executeJavaScript(`window.desktopPet.drag({ screenX: ${200 + step * 25}, screenY: ${200 + step * 10} })`);
+      await sleep(24);
+      dragVisibleFrames.push(await captureVisiblePixels(win));
+    }
+    await win.webContents.executeJavaScript('window.desktopPet.endDrag()');
+    const draggedBounds = win.getBounds();
+    const draggedDebug = await win.webContents.executeJavaScript('window.__petDebugSnapshot()');
+    result.snapshots.dragVisibleFrames = dragVisibleFrames;
+    result.checks.leftDrag = draggedDebug.visualPosition.x === beforeDragDebug.visualPosition.x + 150
+      && draggedDebug.visualPosition.y === beforeDragDebug.visualPosition.y + 60;
+    result.checks.dragSizeStable = draggedBounds.width === initialBounds.width && draggedBounds.height === initialBounds.height;
+    result.checks.dragAlwaysVisible = dragVisibleFrames.every((visiblePixels) => visiblePixels > 1000);
+
+    const crossingSize = petWindowSize(draggedDebug.visualScale);
+    const crossingX = mainBounds.x + mainBounds.width - Math.min(90, crossingSize.width - 48);
+    await setPetConfig({ position: { x: crossingX, y: draggedDebug.visualPosition.y } });
+    const crossingBounds = win.getBounds();
+    const crossingContentBounds = win.getContentBounds();
+    const crossingDebug = await win.webContents.executeJavaScript('window.__petDebugSnapshot()');
+    result.checks.crossesMainWindow = crossingDebug.visualPosition.x < mainBounds.x + mainBounds.width
+      && crossingDebug.visualPosition.x + crossingSize.width > mainBounds.x + mainBounds.width;
+
+    const beforeScaleDebug = await win.webContents.executeJavaScript('window.__petDebugSnapshot()');
+    await win.webContents.executeJavaScript(`(() => {
+      const hitbox = document.getElementById('pet-hitbox');
+      hitbox.dispatchEvent(new PointerEvent('pointerdown', { button: 2, buttons: 2, pointerId: 77, clientX: 100, clientY: 120, bubbles: true }));
+      hitbox.dispatchEvent(new PointerEvent('pointermove', { button: 2, buttons: 2, pointerId: 77, clientX: 145, clientY: 150, bubbles: true }));
+      hitbox.dispatchEvent(new PointerEvent('pointerup', { button: 2, buttons: 0, pointerId: 77, clientX: 145, clientY: 150, bubbles: true }));
+      hitbox.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+    })()`);
+    const scaleUpVisibleFrames = [];
+    for (let frame = 0; frame < 12; frame += 1) {
+      scaleUpVisibleFrames.push(await captureVisiblePixels(win));
+      await sleep(20);
+    }
+    await waitUntil(() => petRendererState.orbitEvents > 0 && petRendererState.wheelEvents > 0, 5000, 'orbit and wheel events');
+    await sleep(350);
+    const scaledBounds = win.getBounds();
+    const scaledContentBounds = win.getContentBounds();
+    const scaledDebug = await win.webContents.executeJavaScript('window.__petDebugSnapshot()');
+    result.checks.rightDragOrbit = petRendererState.orbitEvents > 0;
+    result.checks.wheelScale = petRendererState.wheelEvents > 0
+      && scaledDebug.visualScale > beforeScaleDebug.visualScale
+      && scaledDebug.canvasTransform !== beforeScaleDebug.canvasTransform;
+    const beforeScaleSize = petWindowSize(beforeScaleDebug.visualScale);
+    const scaledVisualSize = petWindowSize(scaledDebug.visualScale);
+    result.checks.scaleAnchor = Math.abs(
+      scaledDebug.visualPosition.x + scaledVisualSize.width / 2
+      - beforeScaleDebug.visualPosition.x - beforeScaleSize.width / 2,
+    ) <= 1
+      && Math.abs(
+        scaledDebug.visualPosition.y + scaledVisualSize.height / 2
+        - beforeScaleDebug.visualPosition.y - beforeScaleSize.height / 2,
+      ) <= 1
+      && scaledBounds.x === crossingBounds.x
+      && scaledBounds.y === crossingBounds.y
+      && scaledBounds.width === crossingBounds.width
+      && scaledBounds.height === crossingBounds.height;
+
+    await win.webContents.executeJavaScript(`document.getElementById('pet-hitbox')
+      .dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }))`);
+    const scaleDownVisibleFrames = [];
+    for (let frame = 0; frame < 12; frame += 1) {
+      scaleDownVisibleFrames.push(await captureVisiblePixels(win));
+      await sleep(20);
+    }
+    await sleep(350);
+    const restoredBounds = win.getBounds();
+    const restoredContentBounds = win.getContentBounds();
+    const restoredDebug = await win.webContents.executeJavaScript('window.__petDebugSnapshot()');
+    result.snapshots.scaleVisibleFrames = { up: scaleUpVisibleFrames, down: scaleDownVisibleFrames };
+    result.snapshots.scaleBounds = { before: crossingBounds, enlarged: scaledBounds, restored: restoredBounds };
+    result.snapshots.scaleContentBounds = {
+      before: crossingContentBounds,
+      enlarged: scaledContentBounds,
+      restored: restoredContentBounds,
+    };
+    result.checks.scaleAlwaysVisible = [...scaleUpVisibleFrames, ...scaleDownVisibleFrames]
+      .every((visiblePixels) => visiblePixels > 1000);
+    result.checks.scaleRoundTrip = restoredBounds.x === crossingBounds.x
+      && restoredBounds.y === crossingBounds.y
+      && restoredBounds.width === crossingBounds.width
+      && restoredBounds.height === crossingBounds.height
+      && Math.abs(restoredDebug.visualScale - beforeScaleDebug.visualScale) < 1e-6
+      && restoredDebug.visualPosition.x === beforeScaleDebug.visualPosition.x
+      && restoredDebug.visualPosition.y === beforeScaleDebug.visualPosition.y;
+
+    petStartupLoading = true;
+    await setPetConfig({
+      petId: 'mmd-bianca-saint',
+      mode: 'all-shuffle',
+      assignments: { tool: ['tool:produce-101', 'tool:shinjuku', 'review:duck-dance'] },
+    });
+    await waitUntil(() => petRendererState.petId === 'mmd-bianca-saint'
+      && petRendererState.motionMode === 'all-shuffle'
+      && petRendererState.modelReady, 60000, 'switched pet model');
+    setPetPhase('tool');
+    await waitUntil(() => petRendererState.phase === 'tool', 5000, 'tool phase');
+    const rendererDebug = await win.webContents.executeJavaScript('window.__petDebugSnapshot()');
+    result.snapshots.finalRenderer = rendererDebug;
+    result.checks.petSwitch = rendererDebug.currentPetId === 'mmd-bianca-saint' && rendererDebug.modelReady;
+    result.checks.actionSwitch = rendererDebug.motionMode === 'all-shuffle'
+      && rendererDebug.phase === 'tool' && rendererDebug.configEvents > 0;
+
+    const persisted = JSON.parse(await fsp.readFile(localSettingsFile, 'utf8'));
+    result.checks.persistence = persisted.pet?.petId === 'mmd-bianca-saint'
+      && persisted.pet?.mode === 'all-shuffle'
+      && persisted.pet?.assignments?.tool?.includes('review:duck-dance')
+      && Math.abs(Number(persisted.pet?.scale) - 1) < 0.001;
+    result.persisted = persisted.pet;
+    result.passed = Object.values(result.checks).every(Boolean);
+  } catch (error) {
+    result.snapshots.errorRenderer = { ...petRendererState };
+    result.error = String(error?.stack || error?.message || error);
+    result.passed = false;
+  }
+  result.finishedAt = new Date().toISOString();
+  await fsp.mkdir(path.dirname(resultFile), { recursive: true });
+  await fsp.writeFile(resultFile, JSON.stringify(result, null, 2), 'utf8');
+  setTimeout(() => app.quit(), 100);
+}
+
+function stopPetDragTracking() {
+  if (petDragSession?.timer) clearInterval(petDragSession.timer);
+  petDragSession = null;
+}
+
+function movePetFromDragPointer(screenX, screenY) {
+  if (!petDragSession || !petWindow || petWindow.isDestroyed()) return;
+  const x = Math.round(petDragSession.positionX + (Number(screenX) - petDragSession.pointerX));
+  const y = Math.round(petDragSession.positionY + (Number(screenY) - petDragSession.pointerY));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  if (x === localSettingsCache.pet.position?.x && y === localSettingsCache.pet.position?.y) return;
+  localSettingsCache.pet = { ...localSettingsCache.pet, position: { x, y } };
+  sendPetEvent({ type: 'position', position: { x, y }, scale: localSettingsCache.pet.scale });
+  updatePetInputPassthrough();
+}
+
+function registerPetIpc() {
+  ipcMain.handle('pet:snapshot', (event) => {
+    assertPetSender(event);
+    return {
+      config: localSettingsCache.pet,
+      phase: petPhase,
+      phases: PET_PHASES,
+      motions: PET_MOTIONS,
+      pets: bundledPetCatalog(),
+      desktopBounds: petDesktopBounds(),
+      selftest: Boolean(String(process.env.AIBROWSER_PET_SELFTEST_RESULT || '').trim()),
+    };
+  });
+  ipcMain.handle('pet:drag-start', (event, point) => {
+    assertPetSender(event);
+    freezePetScaleAtCurrentBounds();
+    if (petScalePersistTimer) clearTimeout(petScalePersistTimer);
+    petScalePersistTimer = null;
+    stopPetDragTracking();
+    const position = visiblePetPosition(localSettingsCache.pet.position, petWindowSize(localSettingsCache.pet.scale));
+    petDragSession = {
+      pointerX: Number(point?.screenX) || 0,
+      pointerY: Number(point?.screenY) || 0,
+      positionX: position.x,
+      positionY: position.y,
+      timer: null,
+    };
+    if (point?.manual !== true) {
+      petDragSession.timer = setInterval(() => {
+        const cursor = screen.getCursorScreenPoint();
+        movePetFromDragPointer(cursor.x, cursor.y);
+      }, 16);
+    }
+    return { success: true };
+  });
+  ipcMain.on('pet:drag', (event, point) => {
+    try { assertPetSender(event); } catch (_) { return; }
+    movePetFromDragPointer(point?.screenX, point?.screenY);
+  });
+  ipcMain.handle('pet:drag-end', async (event) => {
+    assertPetSender(event);
+    stopPetDragTracking();
+    if (!petWindow || petWindow.isDestroyed()) return { success: false };
+    return setPetConfig({ position: localSettingsCache.pet.position });
+  });
+  ipcMain.handle('pet:scale', (event, deltaY) => {
+    assertPetSender(event);
+    return scheduleInteractivePetScale(deltaY);
+  });
+  ipcMain.on('pet:renderer-state', (event, state) => {
+    try { assertPetSender(event); } catch (_) { return; }
+    petRendererState = state && typeof state === 'object' ? {
+      modelReady: state.modelReady === true,
+      modelError: String(state.modelError || '').slice(0, 500),
+      phase: String(state.phase || ''),
+      petId: String(state.petId || ''),
+      motionMode: PET_MOTION_MODES.some(({ id }) => id === state.motionMode)
+        ? state.motionMode
+        : DEFAULT_PET_CONFIG.mode,
+      orbitEvents: Number(state.orbitEvents) || 0,
+      wheelEvents: Number(state.wheelEvents) || 0,
+      configEvents: Number(state.configEvents) || 0,
+      visualScale: Number(state.visualScale) || 1,
+    } : {};
+    if (petRendererState.modelReady && petStartupLoading) {
+      petStartupLoading = false;
+      setPetPhase(derivePetPhase());
+    } else if (petRendererState.modelError) {
+      petStartupLoading = false;
+      setPetPhase('failed', 3000);
+    }
+  });
+  registerTrustedIpc('pet:settings:get', () => ({
+    config: localSettingsCache.pet,
+    phase: petPhase,
+    phases: PET_PHASES,
+    motions: PET_MOTIONS,
+    pets: bundledPetCatalog().map(({ id, displayName, description }) => ({ id, displayName, description })),
+    renderer: petRendererState,
+  }));
+  registerTrustedIpc('pet:settings:set', (_event, partial) => setPetConfig(partial || {}));
+}
+
 function syncFloatingSnapshot() {
   const profiles = Array.isArray(engine?.status?.()) ? engine.status() : [];
   return {
@@ -2175,6 +3035,7 @@ async function createWindow() {
     windows.delete(win);
     if (mainWindow === win) mainWindow = null;
     if (syncFloatingWindow && !syncFloatingWindow.isDestroyed()) syncFloatingWindow.destroy();
+    if (petWindow && !petWindow.isDestroyed()) petWindow.destroy();
   });
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return;
@@ -2270,6 +3131,7 @@ app.whenReady().then(async () => {
   startShortcutBridge();
   registerTextShortcuts();
   registerSyncFloatingIpc();
+  registerPetIpc();
 
   try {
     automation = await startAutomation({
@@ -2839,9 +3701,21 @@ app.whenReady().then(async () => {
     if (!aiService) throw new Error('AI 服务未就绪');
     return aiService.deleteSession(String(id || ''));
   });
-  registerTrustedIpc('ai:chat', (_event, payload) => {
+  registerTrustedIpc('ai:chat', async (_event, payload) => {
     if (!aiService) throw new Error('AI 服务未就绪');
-    return aiService.chat(payload || {});
+    const runId = `chat-${randomUUID()}`;
+    activeAgentStates.set(runId, 'thinking');
+    setPetPhase('thinking');
+    try {
+      const result = await aiService.chat(payload || {});
+      activeAgentStates.delete(runId);
+      setPetPhase('done', 2800);
+      return result;
+    } catch (error) {
+      activeAgentStates.delete(runId);
+      setPetPhase('failed', 3000);
+      throw error;
+    }
   });
   registerTrustedIpc('ai:generate-rpa', (_event, payload) => {
     if (!aiService) throw new Error('AI 服务未就绪');
@@ -3001,6 +3875,17 @@ app.whenReady().then(async () => {
     const floating = await createSyncFloatingWindow();
     floating.show();
   }
+  if (localSettingsCache.pet.enabled) {
+    await createPetWindow();
+  } else {
+    petStartupLoading = false;
+    setPetPhase(derivePetPhase());
+  }
+  const petSelftestResult = String(process.env.AIBROWSER_PET_SELFTEST_RESULT || '').trim();
+  if (petSelftestResult) {
+    await runPetIntegrationSelftest(path.resolve(petSelftestResult));
+    return;
+  }
   startAppUpdateWatcher();
 });
 
@@ -3008,6 +3893,7 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
+  setPetPhase('failed');
   const cloud = localSettingsCache?.cloud || {};
   Promise.resolve()
     .then(async () => {

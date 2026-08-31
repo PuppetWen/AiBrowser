@@ -1,0 +1,37 @@
+Hi, thanks for using the model!
+
+Please, if you find any bug, contact me in Twitter
+
+Tag in posts where you use the model, I want to see your creations
+
+Also welcome to use this model for MMD. 
+
+
+【Prohibition】
+-The act of receiving money using this model.
+-The act of creating and selling other characters by using the data of this model and the mesh.
+
+
+Credits
+
+Original Character design by: azur lane
+
+Shader by: 小二今天吃啥啊@bilibili
+
+
+Warning !!!
+
+The Physics of breast and belly are using the addon springbone https://github.com/artellblender/springbones
+The cloth and hair just blender cloth simulation. Go to the Phy folder and change the pin weight to control it.
+
+
+Model made in Blender 3.2, if you experiments some bugs try to update the Blender version
+
+
+------------------------------------------------------------------------------
+
+範式轉移@Para_shift_art
+https://twitter.com/Para_shift_art
+https://www.pixiv.net/users/16549963
+
+bilibili @金閃閃233

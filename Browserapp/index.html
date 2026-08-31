@@ -1115,6 +1115,34 @@
   <label class="check-row" style="margin-top:10px"><input id="sync-floating-enabled" type="checkbox"> 显示同步悬浮框</label>
   <p class="network-mode-hint" style="margin-top:8px">开始同步后，主控 Chromium 中的鼠标、键盘、滚动与页面导航会同步到所选环境；Firefox-Reverse 通过 Marionette 作为受控环境参与同步。</p>
 </article>
+<article class="storage-settings-card pet-settings-card" id="desktop-pet-card">
+  <details class="pet-settings-disclosure">
+    <summary class="storage-settings-head">
+      <div>
+        <h3>3D 桌面宠物</h3>
+        <p>独立透明桌面悬浮窗；展开后可选择宠物、动作模式和各运行状态的动作。</p>
+      </div>
+      <span id="pet-current-state">加载 / 等待</span>
+    </summary>
+    <div class="pet-settings-body">
+      <label class="check-row"><input id="pet-enabled" type="checkbox"> 显示 3D 桌面宠物</label>
+      <div class="pet-settings-top">
+        <label>宠物
+          <select id="pet-select"></select>
+        </label>
+        <label>动作模式
+          <select id="pet-motion-mode">
+            <option value="by-state">按状态</option>
+            <option value="all-shuffle">任意状态随机循环</option>
+            <option value="all-random-once">任意状态随机</option>
+          </select>
+        </label>
+      </div>
+      <div id="pet-phase-config" class="pet-phase-config"></div>
+      <p class="storage-warning" id="pet-settings-status">修改会立即生效并自动持久化。左键拖动，右键旋转，滚轮缩放。</p>
+    </div>
+  </details>
+</article>
 <!-- The "检查更新" card was removed on request: no GitHub update checking in this build. -->
 <article class="storage-settings-card" id="cloud-backup-card">
   <div class="storage-settings-head">

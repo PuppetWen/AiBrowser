@@ -1,0 +1,184 @@
+{
+  "$schema": "https://schemas.linxin666.org/dsh-pet/pet-manifest-v2.schema.json",
+  "petManifestVersion": 2,
+  "id": "mmd-emden",
+  "displayName": "埃姆登（3D）",
+  "description": "从原 Blender 人形安全导出的本机 GLB 宠物；控制器、R18 网格和特殊替换眼已排除，VMD 动作经人形骨架映射播放。",
+  "version": "1.0.0",
+  "author": "角色设计：Azur Lane；模型：範式轉移；动作作者见 notices/",
+  "license": "Local personal non-commercial use; redistribution prohibited; see MODEL-LICENSE.txt and notices/",
+  "renderer": "mmd3d",
+  "mmd3d": {
+    "model": "model.glb",
+    "files": [],
+    "cameraYaw": 1.5707963267948966,
+    "motionScale": 10,
+    "physics": false,
+    "renderFps": 30,
+    "motionCacheSize": 2,
+    "boneMap": {
+      "root.x": "センター",
+      "spine_01.x": "上半身",
+      "spine_02.x": "上半身2",
+      "neck.x": "首",
+      "head.x": "頭",
+      "shoulder.l": "左肩",
+      "arm_stretch.l": "左腕",
+      "forearm_stretch.l": "左ひじ",
+      "hand.l": "左手首",
+      "shoulder.r": "右肩",
+      "arm_stretch.r": "右腕",
+      "forearm_stretch.r": "右ひじ",
+      "hand.r": "右手首",
+      "thigh_stretch.l": "左足",
+      "leg_stretch.l": "左ひざ",
+      "foot.l": "左足首",
+      "toes_01.l": "左つま先",
+      "thigh_stretch.r": "右足",
+      "leg_stretch.r": "右ひざ",
+      "foot.r": "右足首",
+      "toes_01.r": "右つま先",
+      "thumb1.l": "左親指０",
+      "c_thumb2.l": "左親指１",
+      "c_thumb3.l": "左親指２",
+      "index1.l": "左人指１",
+      "c_index2.l": "左人指２",
+      "c_index3.l": "左人指３",
+      "middle1.l": "左中指１",
+      "c_middle2.l": "左中指２",
+      "c_middle3.l": "左中指３",
+      "ring1.l": "左薬指１",
+      "c_ring2.l": "左薬指２",
+      "c_ring3.l": "左薬指３",
+      "pinky1.l": "左小指１",
+      "c_pinky2.l": "左小指２",
+      "c_pinky3.l": "左小指３",
+      "thumb1.r": "右親指０",
+      "c_thumb2.r": "右親指１",
+      "c_thumb3.r": "右親指２",
+      "index1.r": "右人指１",
+      "c_index2.r": "右人指２",
+      "c_index3.r": "右人指３",
+      "middle1.r": "右中指１",
+      "c_middle2.r": "右中指２",
+      "c_middle3.r": "右中指３",
+      "ring1.r": "右薬指１",
+      "c_ring2.r": "右薬指２",
+      "c_ring3.r": "右薬指３",
+      "pinky1.r": "右小指１",
+      "c_pinky2.r": "右小指２",
+      "c_pinky3.r": "右小指３"
+    },
+    "secondaryMotion": {
+      "prefixes": [
+        "dress_01",
+        "dress_02",
+        "dress_03",
+        "dress_04",
+        "hair_bone_",
+        "long_hair_bone_",
+        "front_hair_bone_",
+        "side_hair"
+      ],
+      "amplitude": 0.08,
+      "speed": 1.5,
+      "stiffness": 18,
+      "damping": 7
+    },
+    "motionSets": {
+      "idle": [
+        {
+          "files": [
+            "motions/iris-out.vmd"
+          ],
+          "endFrame": 464
+        },
+        {
+          "files": [
+            "motions/cat-sway-body.vmd",
+            "motions/cat-sway-face.vmd"
+          ],
+          "endFrame": 321
+        }
+      ],
+      "waiting": [
+        {
+          "files": [
+            "motions/fvn-body.vmd",
+            "motions/fvn-face.vmd"
+          ],
+          "endFrame": 448
+        },
+        {
+          "files": [
+            "motions/say-so-body.vmd",
+            "motions/say-so-face.vmd"
+          ],
+          "endFrame": 405
+        }
+      ],
+      "thinking": [
+        {
+          "files": [
+            "motions/loli-requiem-body.vmd",
+            "motions/loli-requiem-face.vmd"
+          ],
+          "endFrame": 370
+        }
+      ],
+      "tool": [
+        {
+          "files": [
+            "motions/produce-101.vmd"
+          ],
+          "endFrame": 450
+        },
+        {
+          "files": [
+            "motions/shinjuku-body.vmd",
+            "motions/shinjuku-face.vmd"
+          ],
+          "endFrame": 450
+        }
+      ],
+      "review": [
+        {
+          "files": [
+            "motions/duck-dance-body.vmd",
+            "motions/duck-dance-face.vmd"
+          ],
+          "endFrame": 450
+        }
+      ],
+      "done": [
+        {
+          "files": [
+            "motions/wild-disco.vmd"
+          ],
+          "endFrame": 331
+        },
+        {
+          "files": [
+            "motions/pubg-166.vmd"
+          ],
+          "endFrame": 640
+        },
+        {
+          "files": [
+            "motions/sticker-meme.vmd"
+          ],
+          "endFrame": 643
+        }
+      ],
+      "failed": [
+        {
+          "files": [
+            "motions/loli-requiem-body.vmd",
+            "motions/loli-requiem-face.vmd"
+          ],
+          "endFrame": 370
+        }
+      ]
+    }
+  }
+}

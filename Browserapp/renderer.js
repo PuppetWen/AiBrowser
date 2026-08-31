@@ -5036,6 +5036,139 @@ window.ops.onEvent((value) => {
   }
 });
 
+let petSettingsView = null;
+let petSettingsWrite = Promise.resolve();
+
+function petPhaseLabel(phase) {
+  return petSettingsView?.phases?.find((item) => item.id === phase)?.label || phase || '空闲';
+}
+
+function updatePetStateBadge(phase) {
+  const badge = document.getElementById('pet-current-state');
+  if (badge) badge.textContent = petPhaseLabel(phase);
+}
+
+function renderPetSettings() {
+  if (!petSettingsView) return;
+  const { config, pets = [], phases = [], motions = [] } = petSettingsView;
+  const enabled = document.getElementById('pet-enabled');
+  const select = document.getElementById('pet-select');
+  const modeSelect = document.getElementById('pet-motion-mode');
+  const phaseRoot = document.getElementById('pet-phase-config');
+  if (!enabled || !select || !modeSelect || !phaseRoot) return;
+  const openPhase = phaseRoot.querySelector('.pet-motion-multiselect[open]')?.dataset.petPhase || '';
+  enabled.checked = config.enabled === true;
+  select.replaceChildren(...pets.map((pet) => {
+    const option = document.createElement('option');
+    option.value = pet.id;
+    option.textContent = pet.displayName;
+    option.title = pet.description || '';
+    option.selected = pet.id === config.petId;
+    return option;
+  }));
+  modeSelect.value = config.mode;
+  phaseRoot.dataset.mode = config.mode;
+  phaseRoot.hidden = config.mode !== 'by-state';
+  phaseRoot.replaceChildren(...phases.map((phase) => {
+    const group = document.createElement('section');
+    group.className = 'pet-phase-group';
+    const selected = new Set(config.assignments?.[phase.id] || []);
+    const dropdown = document.createElement('details');
+    dropdown.className = 'pet-motion-multiselect';
+    dropdown.dataset.petPhase = phase.id;
+    dropdown.open = phase.id === openPhase;
+    const summary = document.createElement('summary');
+    summary.textContent = phase.label;
+    const checks = document.createElement('div');
+    checks.className = 'pet-motion-checks';
+    for (const motion of motions) {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = selected.has(motion.id);
+      input.dataset.petPhase = phase.id;
+      input.dataset.petMotion = motion.id;
+      const text = document.createElement('span');
+      text.textContent = motion.label;
+      label.append(input, text);
+      checks.append(label);
+    }
+    dropdown.append(summary, checks);
+    dropdown.addEventListener('toggle', () => {
+      if (!dropdown.open) return;
+      phaseRoot.querySelectorAll('.pet-motion-multiselect[open]').forEach((item) => {
+        if (item !== dropdown) item.open = false;
+      });
+    });
+    group.append(dropdown);
+    return group;
+  }));
+  updatePetStateBadge(petSettingsView.phase);
+}
+
+async function refreshPetSettings() {
+  try {
+    petSettingsView = await window.ops.getPetSettings();
+    renderPetSettings();
+  } catch (error) {
+    const status = document.getElementById('pet-settings-status');
+    if (status) status.textContent = `3D 宠物设置加载失败：${error.message || error}`;
+  }
+}
+
+function savePetSettings(partial) {
+  const status = document.getElementById('pet-settings-status');
+  if (status) status.textContent = '正在应用并持久化…';
+  petSettingsWrite = petSettingsWrite.then(async () => {
+    const result = await window.ops.setPetSettings(partial);
+    if (petSettingsView) petSettingsView.config = result.config;
+    renderPetSettings();
+    if (status) status.textContent = '已立即生效并自动持久化。左键拖动，右键旋转，滚轮缩放。';
+  }).catch((error) => {
+    if (status) status.textContent = `应用失败：${error.message || error}`;
+  });
+  return petSettingsWrite;
+}
+
+document.getElementById('pet-enabled')?.addEventListener('change', (event) => {
+  void savePetSettings({ enabled: event.target.checked });
+});
+document.getElementById('pet-select')?.addEventListener('change', (event) => {
+  void savePetSettings({ petId: event.target.value });
+});
+document.getElementById('pet-motion-mode')?.addEventListener('change', (event) => {
+  void savePetSettings({ mode: event.target.value });
+});
+document.getElementById('pet-phase-config')?.addEventListener('change', (event) => {
+  const input = event.target.closest('input[data-pet-phase][data-pet-motion]');
+  if (!input || !petSettingsView) return;
+  const phase = input.dataset.petPhase;
+  const selected = [...document.querySelectorAll(`input[data-pet-phase="${phase}"]:checked`)]
+    .map((item) => item.dataset.petMotion);
+  if (!selected.length) {
+    input.checked = true;
+    toast('每个状态至少保留一个动作');
+    return;
+  }
+  void savePetSettings({ assignments: { [phase]: selected } });
+});
+document.addEventListener('pointerdown', (event) => {
+  if (event.target.closest?.('.pet-motion-multiselect')) return;
+  document.querySelectorAll('.pet-motion-multiselect[open]').forEach((item) => { item.open = false; });
+});
+
+window.ops.onEvent((value) => {
+  if (value?.type === 'pet-phase') {
+    if (petSettingsView) petSettingsView.phase = value.phase;
+    updatePetStateBadge(value.phase);
+  } else if (value?.type === 'pet-settings' && petSettingsView) {
+    petSettingsView.config = value.config;
+    renderPetSettings();
+  }
+});
+
+void refreshPetSettings();
+
 window.ops.onEvent(async (value) => {
   if (value?.type === 'profile-start-progress' && value.id) {
     if (value.error || value.starting === false) {

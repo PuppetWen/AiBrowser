@@ -1,0 +1,135 @@
+{
+  "$schema": "https://schemas.linxin666.org/dsh-pet/pet-manifest-v2.schema.json",
+  "petManifestVersion": 2,
+  "id": "mmd-bianca",
+  "displayName": "比安卡·晴屿漫汐（3D）",
+  "description": "比安卡·晖暮·晴屿漫汐普通形态 PMX 本机宠物。",
+  "version": "1.1.0",
+  "author": "模型：战双帕弥什 / 1010浣；动作作者见 notices/",
+  "license": "Local personal non-commercial use; redistribution prohibited; see MODEL-LICENSE.txt and notices/",
+  "renderer": "mmd3d",
+  "mmd3d": {
+    "model": "model.pmx",
+    "files": [
+      "tex/R5BiankaMd019271Eyes.png",
+      "tex/R5BiankaMd019271Face2.png",
+      "tex/sink22.png",
+      "tex/skin.bmp",
+      "tex/R5BiankaMd019271Shade.png",
+      "Tex/R5BiankaMd019271Body.png",
+      "tex/sink2.bmp",
+      "tex/R5BiankaMd019271Hair01.png",
+      "Tex/hair spa.png",
+      "tex/R5BiankaMd019271Hair02.png",
+      "Tex/R5BiankaMd019271Cloth012.png",
+      "Tex/sinnk.png",
+      "Tex/R5BiankaMd019271Cloth023.png",
+      "tex/R5BiankaMd019271Cloth023.png",
+      "tex/R5BiankaMd019271Fashi.png",
+      "tex/R5BiankaMd019271Fashi02.png",
+      "tex/R5BiankaMd019271Hat.png",
+      "Tex/R5BiankaMd019271Alpha.png",
+      "Tex/mc12.png",
+      "tex/eye set emo.png",
+      "Tex/cheek_00.tga"
+    ],
+    "physics": true,
+    "renderFps": 30,
+    "motionCacheSize": 2,
+    "motionSets": {
+      "idle": [
+        {
+          "files": [
+            "motions/iris-out.vmd"
+          ],
+          "endFrame": 464
+        },
+        {
+          "files": [
+            "motions/cat-sway-body.vmd",
+            "motions/cat-sway-face.vmd"
+          ],
+          "endFrame": 321
+        }
+      ],
+      "waiting": [
+        {
+          "files": [
+            "motions/fvn-body.vmd",
+            "motions/fvn-face.vmd"
+          ],
+          "endFrame": 448
+        },
+        {
+          "files": [
+            "motions/say-so-body.vmd",
+            "motions/say-so-face.vmd"
+          ],
+          "endFrame": 405
+        }
+      ],
+      "thinking": [
+        {
+          "files": [
+            "motions/loli-requiem-body.vmd",
+            "motions/loli-requiem-face.vmd"
+          ],
+          "endFrame": 370
+        }
+      ],
+      "tool": [
+        {
+          "files": [
+            "motions/produce-101.vmd"
+          ],
+          "endFrame": 450
+        },
+        {
+          "files": [
+            "motions/shinjuku-body.vmd",
+            "motions/shinjuku-face.vmd"
+          ],
+          "endFrame": 450
+        }
+      ],
+      "review": [
+        {
+          "files": [
+            "motions/duck-dance-body.vmd",
+            "motions/duck-dance-face.vmd"
+          ],
+          "endFrame": 450
+        }
+      ],
+      "done": [
+        {
+          "files": [
+            "motions/wild-disco.vmd"
+          ],
+          "endFrame": 331
+        },
+        {
+          "files": [
+            "motions/pubg-166.vmd"
+          ],
+          "endFrame": 640
+        },
+        {
+          "files": [
+            "motions/sticker-meme.vmd"
+          ],
+          "endFrame": 643
+        }
+      ],
+      "failed": [
+        {
+          "files": [
+            "motions/loli-requiem-body.vmd",
+            "motions/loli-requiem-face.vmd"
+          ],
+          "endFrame": 370
+        }
+      ]
+    }
+  }
+}

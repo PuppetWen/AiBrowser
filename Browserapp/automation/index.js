@@ -74,6 +74,7 @@ async function startAutomation(context = {}) {
     getAiService: typeof context.getAiService === 'function' ? context.getAiService : () => null,
     engine,
     outputDir: path.join(app.getPath('userData'), 'agent-output'),
+    emit: (event) => emit(event),
   });
 
   const localApi = new LocalApiServer({

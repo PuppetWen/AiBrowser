@@ -1,0 +1,147 @@
+{
+  "$schema": "https://schemas.linxin666.org/dsh-pet/pet-manifest-v2.schema.json",
+  "petManifestVersion": 2,
+  "id": "mmd-odette",
+  "displayName": "奥黛塔（3D）",
+  "description": "奥黛塔 PMX 本机宠物；独立剑与沙拉道具未挂载。",
+  "version": "1.0.0",
+  "author": "模型：miHoYo；改造：观海；动作作者见 notices/",
+  "license": "Local personal non-commercial use; redistribution prohibited; see MODEL-LICENSE.txt and notices/",
+  "renderer": "mmd3d",
+  "mmd3d": {
+    "model": "model.pmx",
+    "files": [
+      "tex/颜.png",
+      "skin.bmp",
+      "toon_defo.bmp",
+      "hair.bmp",
+      "tex/目2.png",
+      "tex/sp2_6.png",
+      "tex/瞳.png",
+      "tex/目光3.png",
+      "spa/Eye_s.png",
+      "tex/目光.png",
+      "tex/髮.png",
+      "spa/jewel2.png",
+      "tex/体.png",
+      "spa/s1.bmp",
+      "spa/metal.png",
+      "tex/体s.png",
+      "tex/肌.png",
+      "tex/体s2.png",
+      "spa/spa.png",
+      "tex/裙.png",
+      "tex/裙_菱形s.png",
+      "spa/spa2_1.png",
+      "tex/裙_菱形sp.png",
+      "spa/spa2_2.png",
+      "tex/裙_多边形s.png",
+      "spa/spa2.png",
+      "tex/裙_三角形s.png",
+      "spa/spa2_31.png",
+      "tex/裙sp.png",
+      "spa/spa_d.png",
+      "tex/照れ.png",
+      "tex/sp.png",
+      "spa/hair_s.bmp"
+    ],
+    "physics": true,
+    "renderFps": 30,
+    "motionCacheSize": 2,
+    "motionSets": {
+      "idle": [
+        {
+          "files": [
+            "motions/iris-out.vmd"
+          ],
+          "endFrame": 464
+        },
+        {
+          "files": [
+            "motions/cat-sway-body.vmd",
+            "motions/cat-sway-face.vmd"
+          ],
+          "endFrame": 321
+        }
+      ],
+      "waiting": [
+        {
+          "files": [
+            "motions/fvn-body.vmd",
+            "motions/fvn-face.vmd"
+          ],
+          "endFrame": 448
+        },
+        {
+          "files": [
+            "motions/say-so-body.vmd",
+            "motions/say-so-face.vmd"
+          ],
+          "endFrame": 405
+        }
+      ],
+      "thinking": [
+        {
+          "files": [
+            "motions/loli-requiem-body.vmd",
+            "motions/loli-requiem-face.vmd"
+          ],
+          "endFrame": 370
+        }
+      ],
+      "tool": [
+        {
+          "files": [
+            "motions/produce-101.vmd"
+          ],
+          "endFrame": 450
+        },
+        {
+          "files": [
+            "motions/shinjuku-body.vmd",
+            "motions/shinjuku-face.vmd"
+          ],
+          "endFrame": 450
+        }
+      ],
+      "review": [
+        {
+          "files": [
+            "motions/duck-dance-body.vmd",
+            "motions/duck-dance-face.vmd"
+          ],
+          "endFrame": 450
+        }
+      ],
+      "done": [
+        {
+          "files": [
+            "motions/wild-disco.vmd"
+          ],
+          "endFrame": 331
+        },
+        {
+          "files": [
+            "motions/pubg-166.vmd"
+          ],
+          "endFrame": 640
+        },
+        {
+          "files": [
+            "motions/sticker-meme.vmd"
+          ],
+          "endFrame": 643
+        }
+      ],
+      "failed": [
+        {
+          "files": [
+            "motions/loli-requiem-body.vmd",
+            "motions/loli-requiem-face.vmd"
+          ],
+          "endFrame": 370
+        }
+      ]
+    }
+  }
+}

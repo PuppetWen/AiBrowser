@@ -60,6 +60,7 @@ class BrowserAgent {
     // in main.js, so the agent must not capture it at build time.
     this._getAiService = typeof options.getAiService === 'function' ? options.getAiService : null;
     this._aiService = options.aiService || null;
+    this._emit = typeof options.emit === 'function' ? options.emit : () => {};
     this.toolset = new AgentToolset({
       engine: options.engine || null,
       outputDir: options.outputDir,
@@ -180,6 +181,11 @@ class BrowserAgent {
 
     session.turns.push({ role: 'user', content: message, at: nowIso() });
     const emit = (event) => { try { onEvent?.(event); } catch (_) { /* ignore */ } };
+    const runId = randomUUID();
+    const emitState = (state, extra = {}) => {
+      try { this._emit({ type: 'agent-state', state, runId, sessionId: session.id, profileId, ...extra }); } catch (_) {}
+    };
+    emitState('thinking');
 
     const tools = this.toolset.definitions();
     const started = Date.now();
@@ -196,13 +202,19 @@ class BrowserAgent {
         break;
       }
 
-      const result = await this.aiService.completeTools(provider, session.turns, {
-        model,
-        system: SYSTEM_PROMPT,
-        tools,
-        maxTokens: 4096,
-        temperature: 0.15,
-      });
+      let result;
+      try {
+        result = await this.aiService.completeTools(provider, session.turns, {
+          model,
+          system: SYSTEM_PROMPT,
+          tools,
+          maxTokens: 4096,
+          temperature: 0.15,
+        });
+      } catch (error) {
+        emitState('failed', { message: String(error?.message || error || '') });
+        throw error;
+      }
 
       if (!result.toolCalls || !result.toolCalls.length) {
         finalText = result.text || '(模型没有返回内容)';
@@ -220,6 +232,7 @@ class BrowserAgent {
 
       for (const call of result.toolCalls) {
         steps += 1;
+        emitState('tool', { tool: call.name });
         emit({ type: 'tool-start', name: call.name, args: call.args });
         const startedAt = Date.now();
         let payload;
@@ -251,11 +264,13 @@ class BrowserAgent {
           at: nowIso(),
         });
       }
+      emitState('thinking');
     }
 
     while (session.turns.length > MAX_TURNS) session.turns.shift();
     session.updatedAt = nowIso();
     emit({ type: 'done', text: finalText });
+    emitState('done');
 
     return {
       sessionId: session.id,

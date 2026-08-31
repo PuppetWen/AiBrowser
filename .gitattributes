@@ -1,0 +1,8 @@
+Browserapp/assets/pets/**/*.vmd filter=lfs diff=lfs merge=lfs -text
+Browserapp/assets/pets/**/*.pmx filter=lfs diff=lfs merge=lfs -text
+Browserapp/assets/pets/**/*.glb filter=lfs diff=lfs merge=lfs -text
+Browserapp/assets/pets/**/*.png filter=lfs diff=lfs merge=lfs -text
+Browserapp/assets/pets/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+Browserapp/assets/pets/**/*.bmp filter=lfs diff=lfs merge=lfs -text
+Browserapp/assets/pets/**/*.tga filter=lfs diff=lfs merge=lfs -text
+Browserapp/pet-runtime/*.wasm filter=lfs diff=lfs merge=lfs -text

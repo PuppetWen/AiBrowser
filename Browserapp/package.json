@@ -1,7 +1,7 @@
 {
   "name": "aibrowser",
   "productName": "AiBrowser",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "AiBrowser\uff1a\u672c\u5730\u6d4f\u89c8\u5668\u73af\u5883\u3001\u6269\u5c55\u4e0e\u7a97\u53e3\u540c\u6b65\u7ba1\u7406\u5668",
   "main": "main.js",
   "private": true,
@@ -41,6 +41,8 @@
     "selftest:extension-multi-env": "node store-batch-four-selftest.js",
     "selftest:ai": "node ai/ai-selftest.js",
     "selftest:agent": "node ai/agent-selftest.js",
+    "patch:pet-vendor": "node scripts/patch-pet-motion-modes.js",
+    "selftest:pet": "node pet-selftest.js",
     "selftest:ai-error": "node automation/local-api-ai-error-selftest.js"
   },
   "devDependencies": {

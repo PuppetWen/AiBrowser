@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('ops', Object.freeze({
   appUpdateOpenRelease: (url) => ipcRenderer.invoke('app:update-open-release', String(url || '')),
   setUiChrome: (payload) => ipcRenderer.invoke('system:set-ui-chrome', payload),
   setSyncFloatingEnabled: (enabled) => ipcRenderer.invoke('system:set-sync-floating', Boolean(enabled)),
+  getPetSettings: () => ipcRenderer.invoke('pet:settings:get'),
+  setPetSettings: (payload) => ipcRenderer.invoke('pet:settings:set', payload || {}),
   kernelStatus: () => ipcRenderer.invoke('kernel:status'),
   kernelDownload: (force) => ipcRenderer.invoke('kernel:download', force),
   kernelCheckUpdate: () => ipcRenderer.invoke('kernel:check-update'),

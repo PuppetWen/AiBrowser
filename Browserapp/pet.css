@@ -1,0 +1,67 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: visible;
+  background: transparent !important;
+  user-select: none;
+}
+body { cursor: default; }
+#pet-stage {
+  --pet-visual-scale: .625;
+  --pet-host-x: 0px;
+  --pet-host-y: 0px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 640px;
+  height: 864px;
+  overflow: visible;
+  background: transparent;
+  touch-action: none;
+  pointer-events: none;
+  contain: layout style size;
+  will-change: transform;
+  transform: translate3d(var(--pet-host-x), var(--pet-host-y), 0);
+}
+#pet-hitbox {
+  --pet-input-x: 0px;
+  --pet-input-y: 0px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 400px;
+  height: 540px;
+  transform: translate3d(var(--pet-input-x), var(--pet-input-y), 0);
+  cursor: grab;
+  touch-action: none;
+  background: transparent;
+}
+body.dragging #pet-hitbox { cursor: grabbing; }
+#pet-stage canvas {
+  pointer-events: none;
+  will-change: transform;
+  transform: translateZ(0) scale(var(--pet-visual-scale));
+  transform-origin: 50% 50%;
+  transition: transform 180ms cubic-bezier(.2,.72,.25,1);
+}
+#pet-status {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  max-width: calc(100% - 28px);
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 999px;
+  background: rgba(17,24,39,.72);
+  color: rgba(255,255,255,.92);
+  font: 11px/1.3 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+#pet-status[hidden] { display: block; opacity: 0; }
