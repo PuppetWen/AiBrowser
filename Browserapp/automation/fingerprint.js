@@ -445,10 +445,33 @@ function expectedClientHintPlatform(os) {
   return 'Windows';
 }
 
-/**
- * Build fingerprint config from profile + optional privacy.fingerprint overrides.
- */
+function optionalCoordinate(value, limit) {
+  if (value == null || typeof value === 'boolean' || (typeof value === 'string' && !value.trim())) return null;
+  const coordinate = Number(value);
+  return Number.isFinite(coordinate) && Math.abs(coordinate) <= limit ? coordinate : null;
+}
+
+function profileGeoposition(profile = {}) {
+  const privacy = profile.privacy || {};
+  if (privacy.geoMode === 'disabled' || privacy.geoMode === 'prompt') return null;
+  const custom = privacy.geoMode === 'custom';
+  const latitude = optionalCoordinate(custom ? privacy.latitude : profile.exitLatitude, 90);
+  const longitude = optionalCoordinate(custom ? privacy.longitude : profile.exitLongitude, 180);
+  if (latitude === null || longitude === null) return null;
+  const accuracy = Number(privacy.accuracy);
+  return { latitude, longitude, accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : custom ? 100 : 1000 };
+}
+
+/** Native mode uses the running browser's own identity surfaces. */
+function isNativeFingerprintProfile(profile = {}) {
+  return profile?.privacy?.fingerprintMode === 'native';
+}
+
+/** Build fingerprint config from profile + optional privacy.fingerprint overrides. */
 function buildFingerprint(profile = {}) {
+  // Native values belong to the running browser. Do not manufacture expected
+  // UA, hardware or display values from the environment's custom settings.
+  if (isNativeFingerprintProfile(profile)) return { native: true, mode: 'native' };
   const stableIdentity = profile.id || profile.name || 'default';
   const launchSeed = String(profile.fingerprintLaunchSeed || '').trim();
   const seed = hashSeed(launchSeed ? `${stableIdentity}:${launchSeed}` : stableIdentity);
@@ -613,20 +636,7 @@ function buildFingerprint(profile = {}) {
     || privacy.timezone
     || ''
   ).trim() || null;
-  let geoposition = null;
-  if (privacy.geoMode === 'custom' && Number.isFinite(Number(privacy.latitude)) && Number.isFinite(Number(privacy.longitude))) {
-    geoposition = {
-      latitude: Number(privacy.latitude),
-      longitude: Number(privacy.longitude),
-      accuracy: Number(privacy.accuracy) || 100,
-    };
-  } else if (privacy.geoMode !== 'disabled' && privacy.geoMode !== 'prompt') {
-    const lat = Number(profile.exitLatitude);
-    const lon = Number(profile.exitLongitude);
-    if (Number.isFinite(lat) && Number.isFinite(lon)) {
-      geoposition = { latitude: lat, longitude: lon, accuracy: Number(privacy.accuracy) || 1000 };
-    }
-  }
+  const geoposition = profileGeoposition(profile);
 
   const webglVendor = (webglMetaMode === 'real')
     ? null
@@ -744,6 +754,7 @@ function buildFingerprint(profile = {}) {
  * Overrides remain supported; callers can surface these warnings before launch.
  */
 function fingerprintConsistencyIssues(fp) {
+  if (fp?.native === true) return { ok: true, issues: [] };
   const issues = [];
   const uaOs = desktopOs(fp?.uaProfile?.os) || desktopOs(parseOsFromUa(fp?.userAgent)) || 'windows';
   const expectedPlatform = OS_PRESETS[uaOs]?.platformNav || OS_PRESETS.windows.platformNav;
@@ -796,6 +807,7 @@ function fingerprintConsistencyIssues(fp) {
  * Document-start injection implementing noise/block modes.
  */
 function buildInjectionScript(fp) {
+  if (fp?.native === true) return '';
   const stability = fp.stability || fp.canvas?.stability || resolveStabilityPolicy({}, {});
   const json = JSON.stringify({
     platform: fp.platform,
@@ -1519,6 +1531,7 @@ function buildInjectionScript(fp) {
 
 /** Worker-safe subset injected before attached workers are resumed. */
 function buildWorkerInjectionScript(fp) {
+  if (fp?.native === true) return '';
   const stability = fp.stability || fp.canvas?.stability || resolveStabilityPolicy({}, {});
   const json = JSON.stringify({
     platform: fp.platform,
@@ -1774,6 +1787,7 @@ function buildWorkerInjectionScript(fp) {
 }
 
 function chromeArgsForFingerprint(fp, profile = {}) {
+  if (fp?.native === true || isNativeFingerprintProfile(profile)) return [];
   const args = [];
   // Critical: without this, Chromium/CDP sets navigator.webdriver = true
   args.push('--disable-blink-features=AutomationControlled');
@@ -1832,25 +1846,16 @@ function chromeArgsForFingerprint(fp, profile = {}) {
 }
 
 async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile = {}) {
+  if (fp?.native === true || isNativeFingerprintProfile(profile)) return { native: true, skipped: true };
   const privacy = profile.privacy || {};
   const timezone = privacy.timezoneMode === 'custom'
     ? privacy.timezone
     : privacy.timezoneMode === 'real'
       ? ''
       : (profile.exitTimezone || '');
-  // geoMode: custom coords | disabled/prompt (no override) | ip/allow (from exit IP)
-  let latitude = null;
-  let longitude = null;
-  if (privacy.geoMode === 'custom') {
-    latitude = Number(privacy.latitude);
-    longitude = Number(privacy.longitude);
-  } else if (privacy.geoMode === 'disabled' || privacy.geoMode === 'prompt') {
-    latitude = null;
-    longitude = null;
-  } else {
-    latitude = Number(profile.exitLatitude);
-    longitude = Number(profile.exitLongitude);
-  }
+  // Keep the native override and the generated fingerprint on the same valid
+  // coordinates. Missing IP data must not become Number(null) === 0.
+  const geoposition = profileGeoposition(profile);
 
   // cdpCall may be:
   //  1) (wsUrl, method, params) — classic page WebSocket path
@@ -1907,12 +1912,8 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
   if (timezone) {
     await softOverride('Emulation.setTimezoneOverride', { timezoneId: timezone });
   }
-  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-    await softOverride('Emulation.setGeolocationOverride', {
-      latitude,
-      longitude,
-      accuracy: privacy.accuracy || 100,
-    });
+  if (geoposition) {
+    await softOverride('Emulation.setGeolocationOverride', geoposition);
   }
   if (fp.languages?.[0]) {
     await softOverride('Emulation.setLocaleOverride', { locale: fp.languages[0] });
@@ -1936,8 +1937,12 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
       } catch (retryError) {
         const retryMsg = String(retryError && retryError.message || retryError || '');
         if (!/already|duplicate|exists/i.test(retryMsg)) {
-          // Soft: still try Runtime.evaluate on current document.
-          documentStartOk = false;
+          // Patching only the current document cannot protect the next page.
+          // Surface failure so the engine does not mark this target injected.
+          const failure = new Error('Fingerprint document-start registration failed: ' + retryMsg);
+          failure.cause = retryError;
+          failure.documentStartOk = false;
+          throw failure;
         } else {
           documentStartOk = true;
         }
@@ -1975,6 +1980,7 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
 }
 
 module.exports = {
+  isNativeFingerprintProfile,
   buildFingerprint,
   buildInjectionScript,
   buildWorkerInjectionScript,

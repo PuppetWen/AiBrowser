@@ -1,13 +1,16 @@
 {
   "name": "aibrowser",
   "productName": "AiBrowser",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "AiBrowser\uff1a\u672c\u5730\u6d4f\u89c8\u5668\u73af\u5883\u3001\u6269\u5c55\u4e0e\u7a97\u53e3\u540c\u6b65\u7ba1\u7406\u5668",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "node scripts/run-app.js",
     "selftest": "node environment-audit-selftest.js",
+    "selftest:audit": "node scripts/audit-regression-selftest.js",
+    "selftest:audit-ui": "node ui-audit-live-selftest.js",
+    "selftest:audit-storage": "node profile-storage-headless-selftest.js",
     "selftest:automation": "node automation/automation-selftest.js",
     "selftest:proxy-subscription": "node automation/proxy-subscription-selftest.js",
     "selftest:protocol": "node automation/protocol/protocol-selftest.js",
@@ -43,6 +46,9 @@
     "selftest:agent": "node ai/agent-selftest.js",
     "patch:pet-vendor": "node scripts/patch-pet-motion-modes.js",
     "selftest:pet": "node pet-selftest.js",
+    "selftest:pet-display": "node pet-display-geometry-selftest.js",
+    "selftest:pet-viewport": "node pet-viewport-live-selftest.js",
+    "selftest:native-fingerprint": "node native-fingerprint-live-selftest.js",
     "selftest:ai-error": "node automation/local-api-ai-error-selftest.js"
   },
   "devDependencies": {

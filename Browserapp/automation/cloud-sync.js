@@ -97,8 +97,8 @@ async function collectProfileDataFiles(profileRoot, profile, limits = {}) {
     candidates.push(['Local Extension Settings', path.join(defaultDir, 'Local Extension Settings')]);
     candidates.push(['Extension State', path.join(defaultDir, 'Extension State')]);
   }
-  const maxFile = limits.maxFileBytes || 25 * 1024 * 1024;
-  const maxTotal = limits.maxTotalBytes || 80 * 1024 * 1024;
+  const maxFile = limits.maxFileBytes ?? 25 * 1024 * 1024;
+  const maxTotal = limits.maxTotalBytes ?? 80 * 1024 * 1024;
   let total = 0;
 
   async function walk(rel, abs) {
@@ -121,6 +121,7 @@ async function collectProfileDataFiles(profileRoot, profile, limits = {}) {
   }
 
   for (const [rel, abs] of candidates) {
+    await assertSafeProfileChild(profileRoot, abs);
     await walk(rel, abs);
   }
   return files;
@@ -189,6 +190,7 @@ function mergeProfiles(localList = [], remoteList = [], mode = 'merge') {
   const local = Array.isArray(localList) ? localList.map(stripDataFiles) : [];
   const remote = Array.isArray(remoteList) ? remoteList.map(stripDataFiles) : [];
   const stats = { added: 0, updated: 0, kept: 0, skipped: 0, conflicts: 0 };
+  const remoteDataProfileIds = new Set();
 
   if (mode === 'overwrite' || mode === 'remote-wins') {
     stats.added = remote.filter((r) => !local.some((l) => l.id === r.id)).length;
@@ -196,6 +198,7 @@ function mergeProfiles(localList = [], remoteList = [], mode = 'merge') {
     stats.kept = 0;
     return {
       profiles: remote.map((p) => ({ ...p, syncedAt: nowIso() })),
+      remoteDataProfileIds: remote.map((p) => p.id),
       stats: { ...stats, mode },
     };
   }
@@ -211,6 +214,7 @@ function mergeProfiles(localList = [], remoteList = [], mode = 'merge') {
     if (!localItem) {
       byId.set(remoteItem.id, { ...remoteItem, syncedAt: nowIso(), _source: 'remote' });
       stats.added += 1;
+      remoteDataProfileIds.add(remoteItem.id);
       continue;
     }
     if (mode === 'local-wins') {
@@ -245,7 +249,8 @@ function mergeProfiles(localList = [], remoteList = [], mode = 'merge') {
         advanced: { ...(localItem.advanced || {}), ...(remoteItem.advanced || {}) },
       };
     }
-    const fromRemote = winner === remoteItem || winner.cookies === remoteItem.cookies;
+    const fromRemote = winner !== localItem;
+    if (fromRemote) remoteDataProfileIds.add(remoteItem.id);
     byId.set(remoteItem.id, {
       ...stripDataFiles(winner),
       syncedAt: nowIso(),
@@ -263,6 +268,7 @@ function mergeProfiles(localList = [], remoteList = [], mode = 'merge') {
 
   return {
     profiles: [...byId.values()],
+    remoteDataProfileIds: [...remoteDataProfileIds],
     stats: { ...stats, mode: mode || 'merge' },
   };
 }
@@ -778,6 +784,7 @@ module.exports = {
   WEBDAV_BRIDGE_PROVIDERS,
   buildBackupPackage,
   parseBackupPackage,
+  collectProfileDataFiles,
   restoreProfileDataFiles,
   mergeProfiles,
   mergeGroups,

@@ -25,6 +25,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
+const { parseProxy: parseProxyConfig } = require('../proxy-forwarder');
 
 const KERNEL_ID = 'firefox-reverse';
 
@@ -109,14 +110,25 @@ async function writeProfilePrefs(profileDir, { marionettePort, proxy, networkMod
   }
   const mode = networkMode === 'system' ? 'system' : (networkMode === 'proxy' ? 'proxy' : 'direct');
   const parsed = mode === 'proxy' ? parseProxy(proxy) : null;
+  if (mode === 'proxy' && !parsed) throw new Error('Firefox 自定义代理地址不能为空');
   if (mode === 'system') {
     // Firefox value 5 delegates proxy discovery to the operating system.
     lines.push('user_pref("network.proxy.type", 5);');
   } else if (parsed) {
     lines.push('user_pref("network.proxy.type", 1);');
+    // user.js is applied over persisted prefs.js. Reset every endpoint so an
+    // earlier HTTP proxy cannot keep overriding a newly selected SOCKS proxy.
+    for (const protocol of ['http', 'ssl', 'ftp', 'socks']) {
+      lines.push(`user_pref("network.proxy.${protocol}", "");`);
+      lines.push(`user_pref("network.proxy.${protocol}_port", 0);`);
+    }
+    lines.push('user_pref("network.proxy.no_proxies_on", "");');
+    lines.push('user_pref("network.proxy.failover_direct", false);');
+    lines.push('user_pref("network.proxy.share_proxy_settings", false);');
     if (parsed.scheme === 'socks') {
       lines.push(`user_pref("network.proxy.socks", "${parsed.host}");`);
       lines.push(`user_pref("network.proxy.socks_port", ${parsed.port});`);
+      lines.push(`user_pref("network.proxy.socks_version", ${parsed.version});`);
       lines.push('user_pref("network.proxy.socks_remote_dns", true);');
     } else {
       lines.push(`user_pref("network.proxy.http", "${parsed.host}");`);
@@ -135,12 +147,20 @@ async function writeProfilePrefs(profileDir, { marionettePort, proxy, networkMod
 }
 
 function parseProxy(value) {
-  const raw = String(value || '').trim();
-  if (!raw || /^(direct|offline|none)/i.test(raw)) return null;
-  const match = raw.match(/^(?:(https?|socks5?|socks4):\/\/)?(?:[^@/]*@)?([\w.-]+):(\d{1,5})$/i);
-  if (!match) return null;
-  const scheme = /socks/i.test(match[1] || '') ? 'socks' : 'http';
-  return { scheme, host: match[2], port: Number(match[3]) };
+  const config = parseProxyConfig(value);
+  if (!config) return null;
+  // The engine converts these endpoints to an unauthenticated local HTTP
+  // bridge. Silently discarding authentication/TLS here would use the wrong
+  // transport or expose credentials to an unencrypted upstream connection.
+  if (config.authenticated || config.protocol === 'https') {
+    throw new Error('Firefox 认证或 HTTPS 代理必须通过本地代理转发器启动');
+  }
+  return {
+    scheme: config.protocol.startsWith('socks') ? 'socks' : 'http',
+    host: config.host,
+    port: config.port,
+    ...(config.protocol.startsWith('socks') ? { version: config.protocol === 'socks4' ? 4 : 5 } : {}),
+  };
 }
 
 async function resolveBrowserWindowPid(launcherPid, timeoutMs = 15000) {
@@ -180,6 +200,12 @@ async function launch({ binary, profileDir, url, proxy, networkMode, marionetteP
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: path.dirname(binary),
     env: env || process.env,
+  });
+  // spawn errors are asynchronous (e.g. an existing non-executable file).
+  // Reject launch before the engine creates a running record for this child.
+  await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('spawn', resolve);
   });
   const launcherPid = child.pid;
   const pid = await resolveBrowserWindowPid(launcherPid);

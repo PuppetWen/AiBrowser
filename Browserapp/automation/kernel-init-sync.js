@@ -10,6 +10,8 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+const { isNativeFingerprintProfile } = require('./fingerprint');
+const { assertSafeProfileChild } = require('./isolation');
 
 const SOURCE_AIBROWSER = 'aibrowser-148';
 
@@ -327,6 +329,33 @@ function applyFingerprintFields(init, fields) {
   return init;
 }
 
+/** Keep kernel management settings, never an identity inherited from custom mode. */
+function nativeKernelInit(previous = {}, profile = {}) {
+  const init = applySafetyFields({
+    token: previous.token,
+    is_debug: previous.is_debug,
+  });
+  Object.assign(init, {
+    is_canvas_finger_printing_enable: false,
+    is_webgl_finger_printing_enable: false,
+    is_audio_finger_printing_enable: false,
+    is_clientrects_finger_printing_enable: false,
+    is_enumerate_devices_enable: false,
+    is_font_finger_printing_enable: false,
+    canvas_fingerprint_keep_consistent_setting: { enable: false },
+    webgl_fingerprint_keep_consistent_setting: { enable: false },
+    cmd_line: { 'remote-debugging-port': '0', 'enable-automation': '' },
+    browser_title: String(profile.name || profile.number || profile.id || 'AiBrowser').slice(0, 120),
+  });
+  // WebRTC routing remains an explicit network setting. The UI native preset
+  // selects real; API callers can still opt into proxy-only or disabled routing.
+  const webrtc = profile.privacy?.webrtc;
+  init.is_webrtc_enable = webrtc !== 'disabled';
+  init.webrtc_policy = webrtc === 'disabled' ? 0 : (webrtc === 'proxy' ? 3 : 1);
+  applyIpc(init, stableBrowserWindowName(profile.id));
+  return init;
+}
+
 async function readJsonIfExists(file) {
   try {
     return JSON.parse(await fsp.readFile(file, 'utf8'));
@@ -377,7 +406,7 @@ async function writeAiBrowserKernelInit(profileRoot, options = {}) {
   if (!profileRoot) throw new Error('profileRoot required');
   await fsp.mkdir(profileRoot, { recursive: true });
 
-  const initPath = path.join(profileRoot, 'init.json');
+  const initPath = await assertSafeProfileChild(profileRoot, path.join(profileRoot, 'init.json'));
   let init = null;
   try {
     init = loadInitObject(await fsp.readFile(initPath));
@@ -390,9 +419,13 @@ async function writeAiBrowserKernelInit(profileRoot, options = {}) {
   }
   if (!init || typeof init !== 'object') init = {};
 
-  const fields = mapFingerprintToInitFields(fingerprint || {}, profile);
-  applySafetyFields(init);
-  applyFingerprintFields(init, fields);
+  const native = isNativeFingerprintProfile(profile);
+  const fields = native ? {} : mapFingerprintToInitFields(fingerprint || {}, profile);
+  if (native) init = nativeKernelInit(init, profile);
+  else {
+    applySafetyFields(init);
+    applyFingerprintFields(init, fields);
+  }
   // Do not force empty proxy here if caller already set init.proxy for bridge — safety only zeros async.
   // Engine may set proxy after; for now leave {} and rely on Chromium --proxy-server.
 
@@ -444,4 +477,5 @@ module.exports = {
   loadInitObject,
   encodeInitObject,
   resolveInitTemplate,
+  nativeKernelInit,
 };

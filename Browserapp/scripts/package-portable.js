@@ -28,7 +28,9 @@ let hostDist = (() => {
     return null;
   }
 })();
-const distRoot = path.join(appRoot, 'dist');
+const distRoot = process.env.OPENBROWSER_PACKAGE_OUTPUT
+  ? path.resolve(process.env.OPENBROWSER_PACKAGE_OUTPUT)
+  : path.join(appRoot, 'dist');
 
 /**
  * Default packaging always ships the integrated kernel.
@@ -151,6 +153,13 @@ function appResourceExcludes() {
     'node_modules', 'dist', 'tools', '.git', '.cache', 'browser-data', 'rpa-output',
     'CODE_OVERVIEW.md', 'bundled-kernels',
   ]);
+}
+
+function isGeneratedPackageEntry(entry) {
+  return /\.(?:log|tmp|orig)$/i.test(entry)
+    || /^tmp-run-.*\.js$/i.test(entry)
+    || (/\.json$/i.test(entry) && /(?:^|[-_.])(?:results?|reports?)(?:[-_.]|$)/i.test(entry))
+    || /^(?:full|remaining|script)-selftest-.*\.json$/i.test(entry);
 }
 
 function pruneForeignKernelSeeds(resourceApp, platform = process.platform, arch = packageArch) {
@@ -310,7 +319,7 @@ function copyAppResources(resourceApp) {
   const excluded = appResourceExcludes();
   fs.mkdirSync(resourceApp, { recursive: true });
   for (const entry of fs.readdirSync(appRoot)) {
-    if (excluded.has(entry)) continue;
+    if (excluded.has(entry) || isGeneratedPackageEntry(entry)) continue;
     copyRecursive(path.join(appRoot, entry), path.join(resourceApp, entry));
   }
   pruneForeignKernelSeeds(resourceApp);
@@ -327,7 +336,7 @@ function copyAppResources(resourceApp) {
       for (const ent of entries) {
         const full = path.join(dir, ent.name);
         if (ent.isDirectory()) walk(full);
-        else if (/readme\.md$/i.test(ent.name) || /\.orig$/i.test(ent.name) || /unlock/i.test(ent.name) || /^OPENBROWSER_/i.test(ent.name)) kill(full);
+        else if (/readme\.md$/i.test(ent.name) || /\.(?:orig|log)$/i.test(ent.name) || /unlock/i.test(ent.name) || /^OPENBROWSER_/i.test(ent.name)) kill(full);
       }
     };
     walk(kernels);

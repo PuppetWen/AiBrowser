@@ -208,7 +208,21 @@ hitbox.addEventListener('wheel', (event) => {
 }, { passive: false });
 
 window.desktopPet.onEvent((event) => {
-  if (event?.type === 'phase') {
+  if (event?.type === 'desktop-bounds' && event.desktopBounds && snapshot) {
+    snapshot.desktopBounds = event.desktopBounds;
+    snapshot.config = {
+      ...snapshot.config,
+      position: event.position || snapshot.config.position,
+      scale: event.scale || snapshot.config.scale,
+    };
+    leftDragging = false;
+    rightDragging = false;
+    lastPointer = null;
+    document.body.classList.remove('dragging');
+    window.scrollTo(0, 0);
+    applyVisualScale(snapshot.config.scale);
+    reportState();
+  } else if (event?.type === 'phase') {
     currentPhase = event.phase || 'idle';
     debugState.phase = currentPhase;
     handle?.setPhase(currentPhase);

@@ -154,7 +154,11 @@ async function main() {
   assert.doesNotThrow(() => externalKernel.detect({}), 'detect must not throw when absent');
   assert.deepStrictEqual(
     externalKernel.parseProxy('socks5://127.0.0.1:1080'),
-    { scheme: 'socks', host: '127.0.0.1', port: 1080 }
+    { scheme: 'socks', host: '127.0.0.1', port: 1080, version: 5 }
+  );
+  assert.deepStrictEqual(
+    externalKernel.parseProxy('socks4://127.0.0.1:1080'),
+    { scheme: 'socks', host: '127.0.0.1', port: 1080, version: 4 }
   );
   assert.strictEqual(externalKernel.parseProxy('Direct'), null);
   ok('external kernel declares its non-CDP limits');

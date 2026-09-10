@@ -31,7 +31,7 @@ function parseProxy(value) {
     let parsed;
     try { parsed = new URL(raw); } catch (_) { throw new Error('Invalid proxy format'); }
     protocol = parsed.protocol.replace(':', '').toLowerCase();
-    host = parsed.hostname; port = Number(parsed.port || (protocol === 'https' ? 443 : 0));
+    host = parsed.hostname; port = Number(parsed.port || (protocol === 'https' ? 443 : protocol === 'http' ? 80 : 0));
     username = decode(parsed.username); password = decode(parsed.password);
   } else {
     const parts = raw.split(':');
@@ -458,15 +458,22 @@ function authorization(config) {
 
 function forwardedHeader(header, config) {
   const lines = header.split('\r\n'); const first = lines.shift();
-  const kept = lines.filter((line) => line && !/^proxy-authorization:/i.test(line) && !/^proxy-connection:/i.test(line));
+  const isConnect = /^CONNECT\s+/i.test(first);
+  const kept = lines.filter((line) => line && !/^proxy-authorization:/i.test(line) && !/^proxy-connection:/i.test(line)
+    && (isConnect || !/^connection:/i.test(line)));
   if (config.authenticated) kept.push('Proxy-Authorization: ' + authorization(config));
-  return [first, ...kept, 'Proxy-Connection: Keep-Alive', '', ''].join('\r\n');
+  // This bridge parses one request per connection. Reusing an ordinary HTTP
+  // connection would pipe the next request without adding upstream credentials.
+  // Ask the proxy to close after the response so browsers reconnect and every
+  // request passes through the authentication step. CONNECT stays a tunnel.
+  if (!isConnect) kept.push('Connection: close');
+  return [first, ...kept, `Proxy-Connection: ${isConnect ? 'Keep-Alive' : 'close'}`, '', ''].join('\r\n');
 }
 
-async function connectHttpUpstream(config, dialerConfig = null) {
+async function connectHttpUpstream(config, dialerConfig = null, signal = null) {
   const connected = dialerConfig
-    ? await connectProxyEndpoint(dialerConfig, config.host, config.port)
-    : { upstream: await connectSocket(config.host, config.port), remainder: Buffer.alloc(0) };
+    ? await connectProxyEndpoint(dialerConfig, config.host, config.port, signal)
+    : { upstream: await connectSocket(config.host, config.port, 8000, signal), remainder: Buffer.alloc(0) };
   let upstream = connected.upstream;
   if (connected.remainder.length) upstream.unshift(connected.remainder);
   if (config.protocol !== 'https') return upstream;
@@ -477,6 +484,9 @@ async function connectHttpUpstream(config, dialerConfig = null) {
     servername: config.host,
     rejectUnauthorized: true,
   });
+  // The bridge writes HTTP/1.1 CONNECT/request headers. Advertising h2 can
+  // select HTTP/2 on a compliant HTTPS proxy, which cannot parse those bytes.
+  opts.ALPNProtocols = ['http/1.1'];
   const secure = guardSocketErrors(tls.connect(opts));
   try {
     await new Promise((resolve, reject) => {
@@ -492,7 +502,7 @@ async function connectHttpUpstream(config, dialerConfig = null) {
 }
 
 async function startHttpBridge(config, onStatus, dialerConfig = null) {
-  const sockets = new Set(); const notify = makeNotifier(onStatus);
+  const sockets = new Set(); const notify = makeNotifier(onStatus); const controller = new AbortController();
   const server = net.createServer((client) => {
     sockets.add(client); client.setNoDelay(true); client.once('close', () => sockets.delete(client));
     let pending = Buffer.alloc(0);
@@ -505,7 +515,7 @@ async function startHttpBridge(config, onStatus, dialerConfig = null) {
       const isConnect = /^CONNECT\s+/i.test(header.split('\r\n', 1)[0]); let upstream;
       const fail = (message) => { notify('UPSTREAM_CONNECT_FAILED', message); if (!client.destroyed) client.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'); };
       (async () => {
-        upstream = await connectHttpUpstream(config, dialerConfig);
+        upstream = await connectHttpUpstream(config, dialerConfig, controller.signal);
         if (client.destroyed) { upstream.destroy(); return; }
         sockets.add(upstream); upstream.once('close', () => sockets.delete(upstream));
         upstream.once('error', (error) => { if (!client.destroyed) fail(error.message); client.destroy(); });
@@ -537,7 +547,7 @@ async function startHttpBridge(config, onStatus, dialerConfig = null) {
     client.on('data', receiveHeader); client.on('error', () => {});
   });
   await listen(server, notify);
-  return bridgeResult(server, sockets, 'http');
+  return bridgeResult(server, sockets, 'http', () => controller.abort());
 }
 
 function listen(server, notify) {

@@ -143,6 +143,15 @@ function extractUserDataDir(command) {
   return String(match.slice(1).find((value) => value !== undefined) || '').trim();
 }
 
+function extractProfileDir(command) {
+  const matches = [...String(command || '').matchAll(
+    /(?:^|\s)--?profile(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s]+))/gi
+  )];
+  // A duplicate profile flag is ambiguous; never authorize termination from it.
+  if (matches.length !== 1) return '';
+  return String(matches[0].slice(1).find((value) => value !== undefined) || '').trim();
+}
+
 function windowsExecutableMatches(actualExecutable, expectedExecutable) {
   const actual = path.win32.normalize(String(actualExecutable || '')).toLowerCase();
   const expected = String(expectedExecutable || '').trim();
@@ -157,8 +166,10 @@ function windowsExecutableMatches(actualExecutable, expectedExecutable) {
  * Inspect a managed browser pid on every platform before allowing termination.
  * options.expectedExecutable(s): path(s) or basenames that may appear in the command line
  * options.expectedUserDataDir: required --user-data-dir match when set
+ * options.expectedProfileDir: required Firefox -profile/--profile match when set
  */
 function processIdentity(pid, options = {}) {
+  if (!Number.isSafeInteger(Number(pid)) || Number(pid) <= 0) return { ok: false, reason: 'invalid process id' };
   if (isWindows()) {
     const inspected = inspectWindowsProcess(pid);
     if (!inspected.ok) return inspected;
@@ -173,6 +184,12 @@ function processIdentity(pid, options = {}) {
       const actualRoot = path.win32.normalize(String(userDataArg || '')).toLowerCase();
       if (!userDataArg || actualRoot !== expectedRoot) {
         return { ok: false, reason: 'managed user-data-dir does not match', command };
+      }
+    }
+    if (options.expectedProfileDir) {
+      const profileArg = extractProfileDir(inspected.commandLine);
+      if (!profileArg || path.win32.resolve(profileArg).toLowerCase() !== path.win32.resolve(String(options.expectedProfileDir)).toLowerCase()) {
+        return { ok: false, reason: 'managed Firefox profile does not match', command };
       }
     }
     return { ok: true, command, executablePath: inspected.executablePath };
@@ -194,6 +211,12 @@ function processIdentity(pid, options = {}) {
     const userDataArg = command.match(/(?:^|\s)--user-data-dir=("[^"]*"|'[^']*'|[^\s]+)/)?.[1]?.replace(/^['"]|['"]$/g, '');
     if (path.resolve(userDataArg || '') !== expectedRoot) {
       return { ok: false, reason: 'managed user-data-dir does not match', command };
+    }
+  }
+  if (options.expectedProfileDir) {
+    const profileArg = extractProfileDir(command);
+    if (!profileArg || path.resolve(profileArg) !== path.resolve(String(options.expectedProfileDir))) {
+      return { ok: false, reason: 'managed Firefox profile does not match', command };
     }
   }
   return { ok: true, command };
@@ -260,6 +283,7 @@ module.exports = {
   commandMatchesExecutable,
   normalizeExpectedExecutables,
   extractUserDataDir,
+  extractProfileDir,
   windowsExecutableMatches,
   LOCAL_API_PORTS,
   defaultApiPort,

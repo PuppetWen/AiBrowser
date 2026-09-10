@@ -186,6 +186,13 @@
   max-height: 28px !important;
 }
 
+.summary-head { flex-wrap: wrap; gap: 10px; }
+.summary-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.profile-summary .summary-presets button { min-width: 0; padding: 8px 6px; white-space: normal; line-height: 1.45; }
+#editor-fingerprint-controls { min-width: 0; margin: 0; padding: 0; border: 0; }
+#editor-fingerprint-controls:disabled { opacity: .6; }
+#editor-native-fingerprint-hint[hidden] { display: none; }
+
 .pet-settings-card { grid-column: 1 / -1; }
 .pet-settings-disclosure > summary { cursor: pointer; list-style: none; margin: -1px 0; }
 .pet-settings-disclosure > summary::-webkit-details-marker { display: none; }

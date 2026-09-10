@@ -306,6 +306,9 @@
               </section>
               <section class="editor-panel" data-editor-panel="privacy">
                 <h3>指纹配置</h3>
+                <label>指纹模式<select id="editor-fingerprint-mode"><option value="custom">自定义指纹</option><option value="native">Google 默认指纹环境（原生）</option></select></label>
+                <p class="network-mode-hint" id="editor-native-fingerprint-hint" hidden>使用当前 Chromium 内核与本机的原生参数，账号数据仍独立保存。此预设不会切换到已安装的 Google Chrome；如需调整下面的指纹项，请切换为“自定义指纹”。</p>
+                <fieldset id="editor-fingerprint-controls">
                 <label class="check-row"><input id="editor-refresh-fingerprint" type="checkbox"> 每次打开刷新指纹</label>
                 <label>User-Agent
                   <textarea id="editor-user-agent" rows="2" placeholder="留空 = 按环境 ID 自动生成"></textarea>
@@ -410,6 +413,7 @@
                 <label class="check-row"><input id="editor-port-scan" type="checkbox"> 端口扫描保护 — 阻止网站探测本机端口</label>
                 <label>允许被扫描的端口（可选，逗号分隔）<input id="editor-port-scan-allow" placeholder="例如：4000,4001（1–65535）"></label>
                 <label class="check-row"><input id="editor-cf-optimize" type="checkbox" checked> Cloudflare 验证优化 — 减少五秒盾卡住（可能略增被识别概率）</label>
+                </fieldset>
               </section>
               <section class="editor-panel" data-editor-panel="advanced">
                 <h3>偏好设置</h3>
@@ -476,7 +480,7 @@
               <div class="editor-actions"><button class="outline" id="editor-cancel" type="button">取消</button><button class="primary" type="submit">立即保存</button></div>
             </form>
             <aside class="profile-summary">
-              <div class="summary-head"><strong>概要</strong><button id="editor-system-defaults" type="button"><i data-lucide="refresh-cw"></i>读取本机默认值</button></div>
+              <div class="summary-head"><strong>概要</strong><div class="summary-presets"><button id="editor-system-defaults" type="button" title="读取当前 AiBrowser 客户端的系统语言、时区和屏幕可用逻辑尺寸，并调整部分指纹选项；不会读取 Google Chrome 配置，也不等于恢复完整原生浏览器环境。"><i data-lucide="refresh-cw"></i>读取本机基础参数</button><button id="editor-google-defaults" type="button" title="切换为 Chromium 原生指纹：UA、硬件和图形信息由实际内核提供，WebRTC 使用默认行为。保留账号数据与代理地址；保存并重启该环境后生效。">Google 默认指纹环境</button></div></div>
               <dl id="editor-summary"></dl>
               <section class="environment-audit" id="editor-audit"></section>
               <p>保存后，运行中的环境需要重启才能应用浏览器级设置。</p>
@@ -843,7 +847,7 @@
             <pre class="rpa-code-block" id="rpa-preview-steps"></pre>
             <div class="rpa-actions">
               <button type="button" class="primary" id="rpa-preview-use">使用此模板</button>
-              <button type="submit" class="outline" value="cancel">关闭</button>
+              <button type="submit" class="outline" value="cancel" formnovalidate>关闭</button>
             </div>
           </form>
         </dialog>
@@ -992,7 +996,7 @@
             <form method="dialog" id="ai-provider-form">
               <div class="dialog-head ai-provider-dialog-head">
                 <div><h2>连接 AI 模型服务</h2><p>选择厂商，填写 URL 与 API Key，获取模型并通过测试后保存。</p></div>
-                <button value="cancel" aria-label="关闭">&times;</button>
+                <button value="cancel" aria-label="关闭" formnovalidate>&times;</button>
               </div>
               <div class="ai-provider-body">
                 <section class="ai-provider-presets">
@@ -1283,10 +1287,10 @@
     </div>
   </div>
 
-  <dialog id="sync-settings-dialog"><form method="dialog" id="sync-settings-form"><div class="dialog-head"><div><h2>&#21516;&#27493;&#35774;&#32622;</h2><p>&#25511;&#21046;&#20027;&#25511;&#29615;&#22659;&#21521;&#34987;&#25511;&#29615;&#22659;&#36716;&#21457;&#30340;&#40736;&#26631;&#21644;&#38190;&#30424;&#20107;&#20214;</p></div><button value="cancel">&times;</button></div><section class="sync-settings-section"><h3>&#21516;&#27493;</h3><div class="sync-setting-grid"><label><span>&#38190;&#30424;</span><input id="settings-sync-keyboard" type="checkbox" checked> &#21516;&#27493;&#38190;&#20837;</label><label><span>&#40736;&#26631;</span><span class="inline-checks"><input id="settings-sync-click" type="checkbox" checked> &#21516;&#27493;&#28857;&#20987; <input id="settings-sync-scroll" type="checkbox" checked> &#21516;&#27493;&#28378;&#21160; <input id="settings-sync-track" type="checkbox" checked> &#21516;&#27493;&#36712;&#36857;</span></label></div></section><section class="sync-settings-section"><h3>&#20223;&#30495;&#25805;&#20316;</h3><div class="speed-setting"><label><input id="settings-delay-input" type="checkbox"> &#36755;&#20837;&#36895;&#24230;</label><span>&#22312;</span><input id="settings-input-min" type="number" min="0" max="5000" value="300"><b>-</b><input id="settings-input-max" type="number" min="0" max="5000" value="300"><span>ms &#20043;&#38388;&#38543;&#26426;</span></div><div class="speed-setting"><label><input id="settings-delay-click" type="checkbox"> &#28857;&#20987;&#36895;&#24230;</label><span>&#22312;</span><input id="settings-click-min" type="number" min="0" max="5000" value="100"><b>-</b><input id="settings-click-max" type="number" min="0" max="5000" value="300"><span>ms &#20043;&#38388;&#38543;&#26426;</span></div></section><div class="dialog-actions"><button value="cancel" class="outline">&#21462;&#28040;</button><button value="default" class="primary">&#20445;&#23384;</button></div></form></dialog>
+  <dialog id="sync-settings-dialog"><form method="dialog" id="sync-settings-form"><div class="dialog-head"><div><h2>&#21516;&#27493;&#35774;&#32622;</h2><p>&#25511;&#21046;&#20027;&#25511;&#29615;&#22659;&#21521;&#34987;&#25511;&#29615;&#22659;&#36716;&#21457;&#30340;&#40736;&#26631;&#21644;&#38190;&#30424;&#20107;&#20214;</p></div><button value="cancel" formnovalidate>&times;</button></div><section class="sync-settings-section"><h3>&#21516;&#27493;</h3><div class="sync-setting-grid"><label><span>&#38190;&#30424;</span><input id="settings-sync-keyboard" type="checkbox" checked> &#21516;&#27493;&#38190;&#20837;</label><label><span>&#40736;&#26631;</span><span class="inline-checks"><input id="settings-sync-click" type="checkbox" checked> &#21516;&#27493;&#28857;&#20987; <input id="settings-sync-scroll" type="checkbox" checked> &#21516;&#27493;&#28378;&#21160; <input id="settings-sync-track" type="checkbox" checked> &#21516;&#27493;&#36712;&#36857;</span></label></div></section><section class="sync-settings-section"><h3>&#20223;&#30495;&#25805;&#20316;</h3><div class="speed-setting"><label><input id="settings-delay-input" type="checkbox"> &#36755;&#20837;&#36895;&#24230;</label><span>&#22312;</span><input id="settings-input-min" type="number" min="0" max="5000" value="300"><b>-</b><input id="settings-input-max" type="number" min="0" max="5000" value="300"><span>ms &#20043;&#38388;&#38543;&#26426;</span></div><div class="speed-setting"><label><input id="settings-delay-click" type="checkbox"> &#28857;&#20987;&#36895;&#24230;</label><span>&#22312;</span><input id="settings-click-min" type="number" min="0" max="5000" value="100"><b>-</b><input id="settings-click-max" type="number" min="0" max="5000" value="300"><span>ms &#20043;&#38388;&#38543;&#26426;</span></div></section><div class="dialog-actions"><button value="cancel" class="outline" formnovalidate>&#21462;&#28040;</button><button value="default" class="primary">&#20445;&#23384;</button></div></form></dialog>
   <dialog id="proxy-dialog">
     <form method="dialog" id="proxy-form">
-      <div class="dialog-head"><div><h2 id="proxy-dialog-title">新建代理</h2><p>保存到本地代理库，不上传云端</p></div><button value="cancel" type="submit">×</button></div>
+      <div class="dialog-head"><div><h2 id="proxy-dialog-title">新建代理</h2><p>保存到本地代理库，不上传云端</p></div><button value="cancel" type="submit" formnovalidate>×</button></div>
       <input type="hidden" id="proxy-edit-id" value="">
       <label>名称<input id="proxy-name" placeholder="例如：美东住宅-01" maxlength="120"></label>
       <div class="form-two">
@@ -1319,7 +1323,7 @@
       <div class="proxy-test-result" id="proxy-dialog-result">保存前可先检测</div>
       <div class="dialog-actions">
         <button type="button" class="outline" id="proxy-dialog-test">检查代理</button>
-        <button value="cancel" class="outline" type="submit">取消</button>
+        <button value="cancel" class="outline" type="submit" formnovalidate>取消</button>
         <button value="default" class="primary" id="proxy-dialog-save" type="submit">保存</button>
       </div>
     </form>
@@ -1329,7 +1333,7 @@
     <form method="dialog" id="proxy-subscription-form">
       <div class="dialog-head">
         <div><h2 id="proxy-subscription-dialog-title">代理订阅设置</h2><p id="proxy-subscription-dialog-desc">下载并解析 Clash YAML；订阅地址和节点只保存在当前项目数据目录</p></div>
-        <button value="cancel" type="submit">×</button>
+        <button value="cancel" type="submit" formnovalidate>×</button>
       </div>
       <input type="hidden" id="proxy-subscription-id">
       <label>订阅地址
@@ -1340,7 +1344,7 @@
       </label>
       <div class="proxy-test-result" id="proxy-subscription-result">保存后会立即拉取并更新该组节点</div>
       <div class="dialog-actions">
-        <button value="cancel" class="outline" type="submit">取消</button>
+        <button value="cancel" class="outline" type="submit" formnovalidate>取消</button>
         <button value="default" class="primary" id="proxy-subscription-save" type="submit">订阅并导入</button>
       </div>
     </form>
@@ -1348,18 +1352,18 @@
 
   <dialog id="proxy-group-dialog">
     <form method="dialog" id="proxy-group-form">
-      <div class="dialog-head"><div><h2>代理组设置</h2><p>组名会显示在代理管理和新建环境的代理选择器中</p></div><button value="cancel" type="submit">×</button></div>
+      <div class="dialog-head"><div><h2>代理组设置</h2><p>组名会显示在代理管理和新建环境的代理选择器中</p></div><button value="cancel" type="submit" formnovalidate>×</button></div>
       <input type="hidden" id="proxy-group-id">
       <label>组名称<input id="proxy-group-name" required maxlength="80"></label>
       <div class="dialog-actions">
-        <button value="cancel" class="outline" type="submit">取消</button>
+        <button value="cancel" class="outline" type="submit" formnovalidate>取消</button>
         <button value="default" class="primary" type="submit">保存</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="profile-dialog"><form method="dialog" id="profile-form">
-    <div class="dialog-head"><h2>新建浏览器环境</h2><button value="cancel">×</button></div>
+    <div class="dialog-head"><h2>新建浏览器环境</h2><button value="cancel" formnovalidate>×</button></div>
     <div class="form-two">
       <label>环境编号（可手动修改）<input name="number" type="number" min="1" max="999999" step="1" required value="1"></label>
       <label>环境名称（选填）<input name="title" maxlength="120" placeholder="留空则显示「环境 N」" autocomplete="off"></label>
@@ -1416,12 +1420,12 @@
       </label>
     </div>
     <label>标签<input name="tag" placeholder="Demo"></label>
-    <div class="dialog-actions"><button value="cancel" class="outline">取消</button><button value="default" class="primary">创建</button></div>
+    <div class="dialog-actions"><button value="cancel" class="outline" formnovalidate>取消</button><button value="default" class="primary">创建</button></div>
   </form></dialog>
-  <dialog id="group-dialog"><form method="dialog" id="group-form"><div class="dialog-head"><h2 id="group-dialog-title">新建分组</h2><button value="cancel" type="submit">×</button></div><input type="hidden" id="group-edit-id"><label>分组名称<input id="group-name" type="text" maxlength="40" required autocomplete="off" placeholder="例如：美国区"></label><label>颜色<span class="themed-color-control"><span class="themed-color-preview" id="group-color-preview"></span><input id="group-color" type="text" value="#245cff" maxlength="7" pattern="#[0-9a-fA-F]{6}" spellcheck="false" aria-label="分组颜色，十六进制"></span></label><div class="group-color-chips" id="group-color-chips"></div><label>备注<textarea id="group-note" rows="2" maxlength="200" placeholder="可选说明"></textarea></label><div class="dialog-actions"><button value="cancel" class="outline" type="submit">取消</button><button value="default" class="primary" type="submit">保存</button></div></form></dialog>
+  <dialog id="group-dialog"><form method="dialog" id="group-form"><div class="dialog-head"><h2 id="group-dialog-title">新建分组</h2><button value="cancel" type="submit" formnovalidate>×</button></div><input type="hidden" id="group-edit-id"><label>分组名称<input id="group-name" type="text" maxlength="40" required autocomplete="off" placeholder="例如：美国区"></label><label>颜色<span class="themed-color-control"><span class="themed-color-preview" id="group-color-preview"></span><input id="group-color" type="text" value="#245cff" maxlength="7" pattern="#[0-9a-fA-F]{6}" spellcheck="false" aria-label="分组颜色，十六进制"></span></label><div class="group-color-chips" id="group-color-chips"></div><label>备注<textarea id="group-note" rows="2" maxlength="200" placeholder="可选说明"></textarea></label><div class="dialog-actions"><button value="cancel" class="outline" type="submit" formnovalidate>取消</button><button value="default" class="primary" type="submit">保存</button></div></form></dialog>
 
   <dialog id="batch-add-dialog"><form method="dialog" id="batch-add-form">
-    <div class="dialog-head"><div><h2>批量新增环境</h2><p>自动优先使用当前最小的空缺编号</p></div><button value="cancel">&times;</button></div>
+    <div class="dialog-head"><div><h2>批量新增环境</h2><p>自动优先使用当前最小的空缺编号</p></div><button value="cancel" formnovalidate>&times;</button></div>
     <div class="form-two"><label>新增数量<input id="batch-add-count" type="number" min="1" max="200" value="10" required></label><label>首个可用编号<input id="batch-add-start" type="number" min="1" value="1" readonly></label></div>
     <div class="form-two"><label><span data-i18n="common.language">语言</span><select id="batch-add-language">
       <option value="en-US">English (US)</option>
@@ -1445,14 +1449,14 @@
     <div id="batch-add-proxy-fields" hidden>
       <label>代理列表（每行一个，数量须与新增环境数一致）<textarea id="batch-add-proxies" placeholder="127.0.0.1:7890&#10;socks5://127.0.0.1:1080"></textarea></label>
     </div>
-    <div class="dialog-actions"><button value="cancel" class="outline">取消</button><button value="default" class="primary">立即批量创建</button></div>
+    <div class="dialog-actions"><button value="cancel" class="outline" formnovalidate>取消</button><button value="default" class="primary">立即批量创建</button></div>
   </form></dialog>
 
-  <dialog id="batch-delete-dialog"><form method="dialog" id="batch-delete-form"><div class="dialog-head"><div><h2 id="batch-delete-title">&#25209;&#37327;&#21024;&#38500;&#29615;&#22659;</h2><p id="batch-delete-summary"></p></div><button value="cancel">&times;</button></div><div class="delete-warning" id="batch-delete-warning">&#27492;&#25805;&#20316;&#20250;&#20174;&#29615;&#22659;&#21015;&#34920;&#20013;&#31227;&#38500;&#25152;&#26377;&#24050;&#21246;&#36873;&#39033;&#12290;&#36816;&#34892;&#20013;&#30340;&#29615;&#22659;&#20250;&#20808;&#23433;&#20840;&#20572;&#27490;&#12290;</div><label class="assign-item"><input id="batch-delete-data" type="checkbox" checked> &#21516;&#26102;&#21024;&#38500;&#29420;&#31435;&#27983;&#35272;&#22120;&#25968;&#25454;&#65288;Cookie&#12289;&#32531;&#23384;&#12289;&#26412;&#22320;&#23384;&#20648;&#65289;</label><div class="dialog-actions"><button value="cancel" class="outline">&#21462;&#28040;</button><button value="default" class="danger" id="batch-delete-confirm">&#30830;&#35748;&#25209;&#37327;&#21024;&#38500;</button></div></form></dialog>
+  <dialog id="batch-delete-dialog"><form method="dialog" id="batch-delete-form"><div class="dialog-head"><div><h2 id="batch-delete-title">&#25209;&#37327;&#21024;&#38500;&#29615;&#22659;</h2><p id="batch-delete-summary"></p></div><button value="cancel" formnovalidate>&times;</button></div><div class="delete-warning" id="batch-delete-warning">&#27492;&#25805;&#20316;&#20250;&#20174;&#29615;&#22659;&#21015;&#34920;&#20013;&#31227;&#38500;&#25152;&#26377;&#24050;&#21246;&#36873;&#39033;&#12290;&#36816;&#34892;&#20013;&#30340;&#29615;&#22659;&#20250;&#20808;&#23433;&#20840;&#20572;&#27490;&#12290;</div><label class="assign-item"><input id="batch-delete-data" type="checkbox" checked> &#21516;&#26102;&#21024;&#38500;&#29420;&#31435;&#27983;&#35272;&#22120;&#25968;&#25454;&#65288;Cookie&#12289;&#32531;&#23384;&#12289;&#26412;&#22320;&#23384;&#20648;&#65289;</label><div class="dialog-actions"><button value="cancel" class="outline" formnovalidate>&#21462;&#28040;</button><button value="default" class="danger" id="batch-delete-confirm">&#30830;&#35748;&#25209;&#37327;&#21024;&#38500;</button></div></form></dialog>
 
-  <dialog id="assign-dialog"><form method="dialog"><div class="dialog-head"><div><h2>批量分配应用</h2><p id="assign-extension-name"></p></div><button value="cancel">×</button></div><div id="assign-profile-list" class="assign-list"></div><div class="dialog-actions"><button value="cancel" class="outline">取消</button><button value="disable" class="danger" id="unassign-extension">移除选中</button><button value="enable" class="primary" id="assign-extension">添加到选中环境</button></div></form></dialog>
+  <dialog id="assign-dialog"><form method="dialog"><div class="dialog-head"><div><h2>批量分配应用</h2><p id="assign-extension-name"></p></div><button value="cancel" formnovalidate>×</button></div><div id="assign-profile-list" class="assign-list"></div><div class="dialog-actions"><button value="cancel" class="outline" formnovalidate>取消</button><button value="disable" class="danger" id="unassign-extension">移除选中</button><button value="enable" class="primary" id="assign-extension">添加到选中环境</button></div></form></dialog>
   <dialog id="batch-update-dialog"><form method="dialog" id="batch-update-form">
-    <div class="dialog-head"><div><h2>批量更新网络模式</h2><p>切换本地直连、系统代理，或为选中环境按顺序分配自定义代理</p></div><button value="cancel">&times;</button></div>
+    <div class="dialog-head"><div><h2>批量更新网络模式</h2><p>切换本地直连、系统代理，或为选中环境按顺序分配自定义代理</p></div><button value="cancel" formnovalidate>&times;</button></div>
     <div class="network-mode-block">
       <span class="network-mode-label">网络模式</span>
       <div class="segmented" id="batch-update-network-mode-ui" role="radiogroup" aria-label="网络模式">
@@ -1466,7 +1470,7 @@
       <label>代理列表<textarea id="batch-proxy-list" placeholder="127.0.0.1:7890&#10;socks5://127.0.0.1:1080"></textarea></label>
     </div>
     <label class="assign-item"><input id="restart-running" type="checkbox" checked> 更新后自动重启原正在运行的环境</label>
-    <div class="dialog-actions"><button value="cancel" class="outline">取消</button><button value="default" class="primary" id="batch-update-submit">检测并应用代理</button></div>
+    <div class="dialog-actions"><button value="cancel" class="outline" formnovalidate>取消</button><button value="default" class="primary" id="batch-update-submit">检测并应用代理</button></div>
   </form></dialog><dialog id="add-app-dialog"><div class="dialog-head"><div><h2>&#28155;&#21152;&#24212;&#29992;</h2><p>&#20174;&#26412;&#22320;&#30446;&#24405;&#25110; Chrome &#24212;&#29992;&#21830;&#24215;&#28155;&#21152;</p></div><button id="close-add-app">&times;</button></div><div class="store-source-tabs"><button class="outline" id="choose-extension-folder">&#23433;&#35013;&#21253;&#30446;&#24405;</button><button class="primary" type="button">Chrome &#24212;&#29992;&#21830;&#24215;</button></div><label>Chrome &#24212;&#29992;&#21830;&#24215; URL<input id="chrome-store-url" placeholder="https://chromewebstore.google.com/detail/.../extension-id"></label><label class="assign-item"><input id="store-assign-all" type="checkbox" checked> &#28155;&#21152;&#21040;&#25152;&#26377;&#29615;&#22659;&#24182;&#37325;&#21551;&#27491;&#22312;&#36816;&#34892;&#30340;&#29615;&#22659;</label><p class="store-note">&#21482;&#25509;&#21463; Chrome Web Store &#38142;&#25509;&#65307;&#19979;&#36733;&#21518;&#20250;&#26657;&#39564; CRX &#26684;&#24335;&#21644;&#25991;&#20214;&#36335;&#24452;&#12290;</p><div class="dialog-actions"><button class="outline" id="cancel-add-app">&#21462;&#28040;</button><button class="primary" id="add-store-submit">&#30830;&#23450;&#28155;&#21152;</button></div></dialog><div class="toast" id="toast"></div>
   <script src="environment-audit.js?v=20260719-environment-audit"></script>
   <script src="assets/vendor/lucide.min.js"></script>

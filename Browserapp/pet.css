@@ -4,11 +4,14 @@ html, body {
   width: 100%;
   height: 100%;
   margin: 0;
-  overflow: visible;
+  /* The transparent desktop host must never become a scrollable page.
+     Keep action overscan on #pet-stage, clipped only at the desktop edge. */
+  overflow: clip;
   background: transparent !important;
   user-select: none;
 }
 body { cursor: default; }
+body { position: fixed; inset: 0; }
 #pet-stage {
   --pet-visual-scale: .625;
   --pet-host-x: 0px;

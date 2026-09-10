@@ -29,7 +29,7 @@ const { LiveSyncController } = require('./live-sync-v5');
 const { startAutomation } = require('./automation');
 const { AiService } = require('./ai/ai-service');
 const cloudSync = require('./automation/cloud-sync');
-const { validateDataRootIsolationSecure, ensureDataRootIsolationSecure, assertProfileId } = require('./automation/isolation');
+const { validateDataRootIsolationSecure, ensureDataRootIsolationSecure, validateProfileRootSecure, assertProfileId } = require('./automation/isolation');
 const { rebasePortablePath } = require('./portable-paths');
 const { parseProxy } = require('./proxy-forwarder');
 const { resolveSystemProxy } = require('./automation/system-proxy');
@@ -41,6 +41,7 @@ const {
   normalizePetConfig,
   petWindowSize,
 } = require('./pet-config');
+const { desktopBoundsForDisplays, recoverPetDisplayPosition } = require('./pet-display-geometry');
 const hostRoamingAppData = String(process.env.APPDATA || '').trim();
 const hostStartMenuPrograms = String(process.env.OPENBROWSER_START_MENU_PROGRAMS || '').trim()
   || (hostRoamingAppData
@@ -169,6 +170,42 @@ const UPDATE_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const UPDATE_TIMEOUT_MS = 20000;
 const UPDATE_ALLOWED_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
 const BUNDLED_RELEASE_HISTORY = Object.freeze([
+  {
+    version: '1.0.7',
+    name: 'AiBrowser v1.0.7',
+    publishedAt: '2026-09-10T00:00:00Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.7',
+    notes: [
+      '- 新增 Google 默认指纹环境预设，使用当前 Chromium 内核的原生参数。',
+      '- 修复环境隔离、并发启动、代理、指纹注入失败和备份恢复问题。',
+      '- 修复保存后立即退出、凭据恢复、导入、语言和表单问题。',
+      '- 修复宠物桌面边缘滚动条，并响应显示器、分辨率和 DPI 变化。',
+      '- 澄清本机参数与启动日志，统一 Windows 文件版本并排除打包诊断数据。',
+    ].join('\n'),
+  },
+  {
+    version: '1.0.6',
+    name: 'AiBrowser v1.0.6',
+    publishedAt: '2026-08-31T10:32:33Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.6',
+    notes: [
+      '- 新增 9 个本地 3D 桌面宠物与 12 个动作。',
+      '- 支持左键拖动、右键旋转、滚轮缩放及三种动作播放模式。',
+      '- 扩大动作绘制范围，修复闪烁、尺寸跳变和模型部位消失。',
+      '- 模型、动作、贴图及运行时随程序本地提供。',
+    ].join('\n'),
+  },
+  {
+    version: '1.0.5',
+    name: 'AiBrowser v1.0.5',
+    publishedAt: '2026-08-13T16:03:00Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.5',
+    notes: [
+      '- 内置离线中文版本历史，并与 GitHub 在线 Releases 合并。',
+      '- 历史版本支持独立折叠、辅助标签与滚动。',
+      '- 保留 GitHub 项目按钮、代理下载、续传及原路径覆盖更新。',
+    ].join('\n'),
+  },
   {
     version: '1.0.4',
     name: 'AiBrowser v1.0.4',
@@ -971,31 +1008,53 @@ async function loadLocalSettings() {
   }
 }
 
-async function saveLocalSettings(value, options = {}) {
-  localSettingsCache = {
-    profileDataRoot: normalizeProfileDataRoot(value.profileDataRoot || localSettingsCache.profileDataRoot, options),
-    cloud: value.cloud || localSettingsCache.cloud || cloudSync.defaultCloudConfig(),
-    uiGroups: Array.isArray(value.uiGroups) ? value.uiGroups : (localSettingsCache.uiGroups || []),
-    syncFloatingEnabled: value.syncFloatingEnabled === true,
-    pet: normalizePetConfig(value.pet || localSettingsCache.pet || DEFAULT_PET_CONFIG, BUNDLED_PET_IDS),
+let localSettingsWriteChain = Promise.resolve();
+
+function saveLocalSettings(value, options = {}) {
+  const persist = async () => {
+    const next = {
+      profileDataRoot: value.profileDataRoot ? normalizeProfileDataRoot(value.profileDataRoot, options) : localSettingsCache.profileDataRoot,
+      cloud: value.cloud || localSettingsCache.cloud || cloudSync.defaultCloudConfig(),
+      uiGroups: Array.isArray(value.uiGroups) ? value.uiGroups : (localSettingsCache.uiGroups || []),
+      syncFloatingEnabled: typeof value.syncFloatingEnabled === 'boolean' ? value.syncFloatingEnabled : localSettingsCache.syncFloatingEnabled,
+      pet: normalizePetConfig(value.pet || localSettingsCache.pet || DEFAULT_PET_CONFIG, BUNDLED_PET_IDS),
+    };
+    await fsp.mkdir(path.dirname(localSettingsFile), { recursive: true });
+    const temporary = localSettingsFile + '.tmp';
+    try {
+      await fsp.writeFile(temporary, JSON.stringify({ version: 6, ...next }, null, 2), 'utf8');
+      await fsp.rename(temporary, localSettingsFile);
+      localSettingsCache = next;
+    } finally {
+      await fsp.rm(temporary, { force: true }).catch(() => {});
+    }
   };
-  await fsp.mkdir(path.dirname(localSettingsFile), { recursive: true });
-  const temporary = localSettingsFile + '.tmp';
-  await fsp.writeFile(temporary, JSON.stringify({ version: 6, ...localSettingsCache }, null, 2), 'utf8');
-  await fsp.rm(localSettingsFile, { force: true });
-  await fsp.rename(temporary, localSettingsFile);
+  const result = localSettingsWriteChain.then(persist);
+  localSettingsWriteChain = result.catch(() => {});
+  return result;
 }
 
 async function updateProfileDataRoot(value, options = {}) {
   if (!engine) throw new Error('Browser engine is not ready');
-  if (engine.running.size) throw new Error('\u8bf7\u5148\u505c\u6b62\u6240\u6709\u73af\u5883\uff0c\u518d\u4fee\u6539\u6570\u636e\u4fdd\u5b58\u4f4d\u7f6e');
-  const profileDataRoot = normalizeProfileDataRoot(value, options);
-  const secureCheck = await ensureDataRootIsolationSecure(profileDataRoot);
-  if (!secureCheck.ok) throw new Error(secureCheck.message);
-  engine.setProfileDataRoot(profileDataRoot);
-  await saveLocalSettings({ ...localSettingsCache, profileDataRoot }, options);
-  emit({ type: 'storage-settings', profileRoot: profileDataRoot });
-  return { success: true, profileRoot: profileDataRoot, defaultProfileRoot: defaultProfileDataRoot };
+  if (engine.changingProfileDataRoot || engine.restoringBackup) throw new Error('请等待数据目录变更或备份恢复完成');
+  engine.changingProfileDataRoot = true;
+  try {
+    if (engine.running.size || engine.starting?.size) throw new Error('\u8bf7\u5148\u505c\u6b62\u6240\u6709\u73af\u5883\uff0c\u518d\u4fee\u6539\u6570\u636e\u4fdd\u5b58\u4f4d\u7f6e');
+    const profileDataRoot = normalizeProfileDataRoot(value, options);
+    const secureCheck = await ensureDataRootIsolationSecure(profileDataRoot);
+    if (!secureCheck.ok) throw new Error(secureCheck.message);
+    engine.setProfileDataRoot(profileDataRoot);
+    try {
+      await saveLocalSettings({ profileDataRoot }, options);
+    } catch (error) {
+      engine.setProfileDataRoot(localSettingsCache.profileDataRoot);
+      throw error;
+    }
+    emit({ type: 'storage-settings', profileRoot: profileDataRoot });
+    return { success: true, profileRoot: profileDataRoot, defaultProfileRoot: defaultProfileDataRoot };
+  } finally {
+    engine.changingProfileDataRoot = false;
+  }
 }
 
 function providerConfigFromCloud(cloud) {
@@ -1035,12 +1094,24 @@ async function runCloudBackup(payload = {}) {
   const result = await cloudSync.upload(cloud.provider, providerConfigFromCloud(cloud), buffer, remoteName);
   cloud.lastSyncAt = new Date().toISOString();
   cloud.lastError = '';
-  await saveLocalSettings({ ...localSettingsCache, cloud });
+  await saveLocalSettings({ cloud });
   emit({ type: 'cloud-sync', action: 'backup', ...meta, ...result });
   return { success: true, meta, result, cloud };
 }
 
-async function applyBackupBody(body, { mode = 'merge', localProfiles = null, localGroups = null } = {}) {
+async function applyBackupBody(body, { mode = 'merge', localProfiles = null, localGroups = null, scopeProfileIds = null } = {}) {
+  if (engine?.running?.size || engine?.starting?.size) throw new Error('请先停止所有环境，再恢复浏览器备份');
+  if (engine?.restoringBackup) throw new Error('正在恢复浏览器备份，请等待完成');
+  if (engine?.changingProfileDataRoot) throw new Error('请等待数据目录变更完成');
+  if (engine) engine.restoringBackup = true;
+  try {
+    return await applyStoppedBackupBody(body, { mode, localProfiles, localGroups, scopeProfileIds });
+  } finally {
+    if (engine) engine.restoringBackup = false;
+  }
+}
+
+async function applyStoppedBackupBody(body, { mode = 'merge', localProfiles = null, localGroups = null, scopeProfileIds = null } = {}) {
   const profileRoot = engine?.getProfileDataRoot?.() || localSettingsCache.profileDataRoot;
   const remoteProfiles = (body.profiles || []).map((p) => {
     const copy = { ...p };
@@ -1048,8 +1119,12 @@ async function applyBackupBody(body, { mode = 'merge', localProfiles = null, loc
   });
   let restoredFiles = 0;
   const dataById = new Map();
+  const remoteIds = new Set();
   for (const profile of remoteProfiles) {
     assertProfileId(profile?.id);
+    const key = profile.id.toLowerCase();
+    if (remoteIds.has(key)) throw new Error('备份包含重复或大小写冲突的环境 ID：' + profile.id);
+    remoteIds.add(key);
     if (profile._dataFiles && profile.id) {
       dataById.set(profile.id, profile._dataFiles);
       delete profile._dataFiles;
@@ -1061,12 +1136,38 @@ async function applyBackupBody(body, { mode = 'merge', localProfiles = null, loc
     : [...(engine?.profiles?.values?.() || [])];
   const localGroupList = Array.isArray(localGroups) ? localGroups : (localSettingsCache.uiGroups || []);
 
-  const merged = cloudSync.mergeProfiles(localList, remoteProfiles, mode);
-  const groups = cloudSync.mergeGroups(localGroupList, body.groups || [], mode);
+  const scope = Array.isArray(scopeProfileIds) ? new Set(scopeProfileIds.map(assertProfileId)) : null;
+  const merged = cloudSync.mergeProfiles(
+    scope ? localList.filter((profile) => scope.has(profile.id)) : localList,
+    scope ? remoteProfiles.filter((profile) => scope.has(profile.id)) : remoteProfiles,
+    mode,
+  );
+  if (scope) merged.profiles = [...localList.filter((profile) => !scope.has(profile.id)), ...merged.profiles];
+  const metadataMode = scope && (mode === 'overwrite' || mode === 'remote-wins') ? 'merge' : mode;
+  const groups = cloudSync.mergeGroups(localGroupList, body.groups || [], metadataMode);
+  if (merged.profiles.length > 1000) throw new Error('Invalid profile list');
+  if (engine) merged.profiles = merged.profiles.map((profile) => engine.sanitizeProfile(profile));
+  const mergedIds = new Set();
+  const mergedNumbers = new Set();
+  for (const profile of merged.profiles) {
+    assertProfileId(profile?.id);
+    const key = profile.id.toLowerCase();
+    if (mergedIds.has(key)) throw new Error('环境 ID 大小写冲突：' + profile.id);
+    mergedIds.add(key);
+    if (profile.number) {
+      if (mergedNumbers.has(profile.number)) throw new Error('环境编号重复：' + profile.number);
+      mergedNumbers.add(profile.number);
+    }
+    engine?.assertProfileIdentity(profile.id);
+    const check = await validateProfileRootSecure(profileRoot, path.join(profileRoot, profile.id), profile.id);
+    if (!check.ok) throw new Error(check.message);
+  }
+  if (engine?.running?.size || engine?.starting?.size) throw new Error('请先停止所有环境，再恢复浏览器备份');
 
   // restore browser data files for profiles that came from remote package
+  const restoreIds = new Set(merged.remoteDataProfileIds);
   for (const profile of merged.profiles) {
-    const files = dataById.get(profile.id);
+    const files = restoreIds.has(profile.id) ? dataById.get(profile.id) : null;
     if (files) {
       restoredFiles += await cloudSync.restoreProfileDataFiles(path.join(profileRoot, profile.id), files);
     }
@@ -1076,7 +1177,7 @@ async function applyBackupBody(body, { mode = 'merge', localProfiles = null, loc
   if (Array.isArray(proxies) && proxies.length) {
     let localProxies = [];
     try { localProxies = automation?.proxyStore?.list?.({}) || []; } catch (_) {}
-    proxies = cloudSync.mergeProxies(localProxies, proxies, mode);
+    proxies = cloudSync.mergeProxies(localProxies, proxies, metadataMode);
     if (automation?.proxyStore?.replaceAll) {
       await automation.proxyStore.replaceAll(proxies).catch(() => {});
     } else if (automation?.proxyStore) {
@@ -1086,7 +1187,16 @@ async function applyBackupBody(body, { mode = 'merge', localProfiles = null, loc
     }
   }
 
-  await saveLocalSettings({ ...localSettingsCache, uiGroups: groups });
+  await saveLocalSettings({ uiGroups: groups });
+  if (engine && (mode === 'overwrite' || mode === 'remote-wins')) {
+    const keptIds = new Set(merged.profiles.map((profile) => profile.id));
+    const removedIds = [...engine.profiles.keys()].filter((id) => !keptIds.has(id));
+    // Overwrite replaces configuration only; data folders stay available for
+    // recovery unless the user explicitly deletes those environments' data.
+    for (let index = 0; index < removedIds.length; index += 200) {
+      await engine.deleteProfiles(removedIds.slice(index, index + 200), false);
+    }
+  }
   if (engine) engine.syncProfiles(merged.profiles);
 
   return {
@@ -1116,12 +1226,13 @@ async function runCloudRestore(payload = {}) {
     mode,
     localProfiles: payload.localProfiles,
     localGroups: payload.localGroups,
+    scopeProfileIds: Array.isArray(payload.profileIds) && payload.profileIds.length ? payload.profileIds : null,
   });
 
   cloud.lastSyncAt = new Date().toISOString();
   cloud.lastError = '';
   cloud.restoreMode = mode;
-  await saveLocalSettings({ ...localSettingsCache, cloud, uiGroups: applied.groups });
+  await saveLocalSettings({ cloud, uiGroups: applied.groups });
   emit({
     type: 'cloud-sync',
     action: 'restore',
@@ -1161,7 +1272,7 @@ async function runCloudProfilePush(payload = {}) {
   }
   cloud.lastSyncAt = new Date().toISOString();
   cloud.lastError = '';
-  await saveLocalSettings({ ...localSettingsCache, cloud });
+  await saveLocalSettings({ cloud });
   emit({ type: 'cloud-sync', action: 'profile-push', count: results.length, ids });
   return { success: true, results, cloud };
 }
@@ -1186,12 +1297,12 @@ async function runCloudProfilePull(payload = {}) {
   }
   const applied = await applyBackupBody(
     { profiles: combinedRemote, groups: payload.groups || localSettingsCache.uiGroups || [], proxies: [] },
-    { mode, localProfiles, localGroups: payload.localGroups }
+    { mode, localProfiles, localGroups: payload.localGroups, scopeProfileIds: ids }
   );
   restoredFiles = applied.restoredFiles;
   cloud.lastSyncAt = new Date().toISOString();
   cloud.lastError = '';
-  await saveLocalSettings({ ...localSettingsCache, cloud, uiGroups: applied.groups });
+  await saveLocalSettings({ cloud, uiGroups: applied.groups });
   emit({ type: 'cloud-sync', action: 'profile-pull', count: ids.length, mode, mergeStats: applied.mergeStats });
   return { success: true, mode, ...applied, per, restoredFiles, cloud };
 }
@@ -2131,12 +2242,46 @@ function petVisualOffset(scale) {
 }
 
 function petDesktopBounds() {
+  return desktopBoundsForDisplays(screen.getAllDisplays())
+    || { ...screen.getPrimaryDisplay().bounds };
+}
+
+function refreshPetDesktopGeometry(win) {
+  if (petWindow !== win || win.isDestroyed()) return;
   const displays = screen.getAllDisplays();
-  const left = Math.min(...displays.map(({ bounds }) => bounds.x));
-  const top = Math.min(...displays.map(({ bounds }) => bounds.y));
-  const right = Math.max(...displays.map(({ bounds }) => bounds.x + bounds.width));
-  const bottom = Math.max(...displays.map(({ bounds }) => bounds.y + bounds.height));
-  return { x: left, y: top, width: right - left, height: bottom - top };
+  const desktopBounds = desktopBoundsForDisplays(displays);
+  if (!desktopBounds) return;
+  stopPetDragTracking();
+  if (petScalePersistTimer) clearTimeout(petScalePersistTimer);
+  petScalePersistTimer = null;
+  petScaleCenterAnchor = null;
+  const currentBounds = win.getBounds();
+  if (['x', 'y', 'width', 'height'].some((key) => currentBounds[key] !== desktopBounds[key])) {
+    win.setBounds(desktopBounds, false);
+  }
+  const scale = localSettingsCache.pet.scale;
+  const position = recoverPetDisplayPosition(localSettingsCache.pet.position, petWindowSize(scale), displays, PET_VIEWPORT_OVERSCAN);
+  localSettingsCache.pet = { ...localSettingsCache.pet, position };
+  sendPetEvent({ type: 'desktop-bounds', desktopBounds: win.getBounds(), position, scale });
+  updatePetInputPassthrough();
+}
+
+function watchPetDisplayChanges(win) {
+  const refresh = () => {
+    try { refreshPetDesktopGeometry(win); }
+    catch (error) { console.warn('[desktop-pet] display update failed:', error); }
+  };
+  const metricsChanged = (_event, _display, metrics) => {
+    if (!Array.isArray(metrics) || metrics.some((metric) => ['bounds', 'workArea', 'scaleFactor', 'rotation'].includes(metric))) refresh();
+  };
+  screen.on('display-added', refresh);
+  screen.on('display-removed', refresh);
+  screen.on('display-metrics-changed', metricsChanged);
+  win.once('closed', () => {
+    screen.removeListener('display-added', refresh);
+    screen.removeListener('display-removed', refresh);
+    screen.removeListener('display-metrics-changed', metricsChanged);
+  });
 }
 
 function updatePetInputPassthrough() {
@@ -2186,7 +2331,7 @@ async function persistInteractivePetScale() {
   const pet = {
     ...localSettingsCache.pet,
   };
-  await saveLocalSettings({ ...localSettingsCache, pet });
+  await saveLocalSettings({ pet });
   notifyPetConfig();
 }
 
@@ -2275,6 +2420,7 @@ async function createPetWindow() {
     },
   });
   petWindow = win;
+  watchPetDisplayChanges(win);
   try { win.setAlwaysOnTop(true, 'screen-saver', 1); } catch (_) {}
   try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) {}
   win.setMenu(null);
@@ -2348,7 +2494,7 @@ async function setPetConfig(partial = {}) {
     ...next,
     position: visiblePetPosition(next.position, petWindowSize(next.scale)),
   };
-  await saveLocalSettings({ ...localSettingsCache, pet: next });
+  await saveLocalSettings({ pet: next });
   if (next.enabled) {
     const win = await createPetWindow();
     applyPetWindowGeometry(win, next.scale, next.position);
@@ -2698,7 +2844,7 @@ function registerPetIpc() {
       phases: PET_PHASES,
       motions: PET_MOTIONS,
       pets: bundledPetCatalog(),
-      desktopBounds: petDesktopBounds(),
+      desktopBounds: petWindow && !petWindow.isDestroyed() ? petWindow.getBounds() : petDesktopBounds(),
       selftest: Boolean(String(process.env.AIBROWSER_PET_SELFTEST_RESULT || '').trim()),
     };
   });
@@ -2792,7 +2938,7 @@ function syncFloatingSnapshot() {
 
 async function setSyncFloatingEnabled(enabled) {
   const next = Boolean(enabled);
-  await saveLocalSettings({ ...localSettingsCache, syncFloatingEnabled: next });
+  await saveLocalSettings({ syncFloatingEnabled: next });
   if (next) {
     const win = await createSyncFloatingWindow();
     if (!win.isVisible()) win.show();
@@ -2844,7 +2990,7 @@ async function createSyncFloatingWindow() {
     event.preventDefault();
     win.hide();
     if (localSettingsCache.syncFloatingEnabled) {
-      saveLocalSettings({ ...localSettingsCache, syncFloatingEnabled: false })
+      saveLocalSettings({ syncFloatingEnabled: false })
         .then(() => emit({ type: 'sync-floating-setting', enabled: false }))
         .catch((error) => console.warn('Could not save floating sync visibility:', error.message));
     }
@@ -3278,13 +3424,11 @@ app.whenReady().then(async () => {
     return { success: true, profileRoot };
   });
   registerTrustedIpc('cloud:get-config', async () => {
-    await loadLocalSettings();
     return localSettingsCache.cloud || cloudSync.defaultCloudConfig();
   });
   registerTrustedIpc('cloud:set-config', async (_event, cloud) => {
-    await loadLocalSettings();
     const next = { ...cloudSync.defaultCloudConfig(), ...(localSettingsCache.cloud || {}), ...(cloud || {}) };
-    await saveLocalSettings({ ...localSettingsCache, cloud: next });
+    await saveLocalSettings({ cloud: next });
     return next;
   });
   registerTrustedIpc('cloud:choose-dir', async () => {
@@ -3341,7 +3485,7 @@ app.whenReady().then(async () => {
     });
     return { success: true, mode, ...applied };
   });
-  registerTrustedIpc('profiles:sync', (_event, profiles) => engine.syncProfiles(profiles));
+  registerTrustedIpc('profiles:sync', (_event, profiles) => engine.syncProfiles(profiles, { waitForPersistence: true }));
   registerTrustedIpc('profiles:delete', async (_event, payload) => {
     const ids = sanitizeIds(payload?.ids || []);
     if (syncState.active && syncState.selected.some((id) => ids.includes(id))) await endSync();
@@ -3917,6 +4061,7 @@ app.on('before-quit', (event) => {
       console.warn('AiBrowser quit automation stop failed:', error?.message || error);
     }))
     .then(() => (engine ? engine.stopAll() : null))
+    .then(() => engine?.persistenceQueue)
     .catch((error) => {
       console.warn('AiBrowser quit cleanup failed:', error?.message || error);
     })

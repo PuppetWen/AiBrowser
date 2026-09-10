@@ -98,7 +98,8 @@ function isPathInsideOrEqual(candidate, parent) {
 }
 
 function isValidProfileId(value) {
-  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value)
+    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(value);
 }
 
 function assertProfileId(value) {
@@ -108,7 +109,19 @@ function assertProfileId(value) {
 
 function realPathOrResolved(value) {
   const resolved = path.resolve(String(value || ''));
-  try { return fs.realpathSync.native(resolved); } catch (_) { return resolved; }
+  // Resolve the nearest existing ancestor as well: a not-yet-created directory
+  // below a junction must not bypass the system-browser directory check.
+  let current = resolved;
+  const suffix = [];
+  while (true) {
+    try { return path.join(fs.realpathSync.native(current), ...suffix); }
+    catch (_) {
+      const parent = path.dirname(current);
+      if (parent === current) return resolved;
+      suffix.unshift(path.basename(current));
+      current = parent;
+    }
+  }
 }
 
 function isLinkLike(value) {
@@ -140,7 +153,7 @@ function systemBrowserDataRoots(env = process.env, home = require('os').homedir(
     // Using APPDATA (Roaming) would miss the real profile tree and allow false-ok isolation.
     const localAppData = env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
     const appData = env.APPDATA || path.join(home, 'AppData', 'Roaming');
-    return [
+    const roots = [
       path.join(localAppData, 'Google', 'Chrome', 'User Data'),
       path.join(localAppData, 'Google', 'Chrome for Testing', 'User Data'),
       path.join(localAppData, 'Google', 'Chrome Beta', 'User Data'),
@@ -154,6 +167,15 @@ function systemBrowserDataRoots(env = process.env, home = require('os').homedir(
       path.join(appData, 'Google', 'Chrome', 'User Data'),
       path.join(appData, 'Google', 'Chrome for Testing', 'User Data'),
     ];
+    // Portable mode changes APPDATA/LOCALAPPDATA for its own child processes.
+    // The real user's installed-browser directories still need protection.
+    const nativeLocal = path.join(home, 'AppData', 'Local');
+    const nativeRoaming = path.join(home, 'AppData', 'Roaming');
+    if (normalizedPath(localAppData) !== normalizedPath(nativeLocal)
+      || normalizedPath(appData) !== normalizedPath(nativeRoaming)) {
+      roots.push(...systemBrowserDataRoots({ LOCALAPPDATA: nativeLocal, APPDATA: nativeRoaming }, home, 'win32'));
+    }
+    return [...new Set(roots)];
   }
   return [
     path.join(home, '.config', 'google-chrome'),
@@ -227,6 +249,8 @@ function validateDataRootIsolationSecure(dataRoot, options = {}) {
 }
 
 async function ensureDataRootIsolationSecure(dataRoot, options = {}) {
+  const preliminary = validateDataRootIsolationSecure(dataRoot, options);
+  if (!preliminary.ok) return preliminary;
   await fsp.mkdir(dataRoot, { recursive: true });
   return validateDataRootIsolationSecure(dataRoot, options);
 }
@@ -252,7 +276,7 @@ function auditIsolation(runningEntries = []) {
     }
     // Case-normalized key on Windows so C:\A and c:\a are the same root
     const resolved = path.resolve(entry.root);
-    const key = normalizedPath(resolved);
+    const key = normalizedPath(realPathOrResolved(resolved));
     if (rootSet.has(key)) {
       issues.push({
         level: 'critical',
@@ -275,7 +299,7 @@ function auditIsolation(runningEntries = []) {
   }
 
   return {
-    ok: issues.filter((i) => i.level === 'critical').length === 0,
+    ok: !issues.some((i) => i.level === 'critical' || i.level === 'error'),
     count: roots.length,
     distinctRoots: rootSet.size,
     distinctPorts: portSet.size,
@@ -311,6 +335,9 @@ function validateProfileRoot(dataRoot, profileRoot, profileId) {
 async function validateProfileRootSecure(dataRoot, profileRoot, profileId, options = {}) {
   const lexical = validateProfileRoot(dataRoot, profileRoot, profileId);
   if (!lexical.ok) return lexical;
+  const preliminary = validateDataRootIsolationSecure(dataRoot, options);
+  if (!preliminary.ok) return preliminary;
+  if (isLinkLike(profileRoot)) return { ok: false, message: 'profile root must not be a symlink or junction', root: profileRoot };
   if (options.create) {
     await fsp.mkdir(dataRoot, { recursive: true });
     await fsp.mkdir(profileRoot, { recursive: true });
@@ -331,6 +358,12 @@ async function assertSafeProfileChild(profileRoot, target, options = {}) {
   const child = path.resolve(target);
   if (!isPathInsideOrEqual(child, base) || normalizedPath(child) === normalizedPath(base)) {
     throw new Error('Isolation error: target escapes profile root');
+  }
+  try {
+    const stat = await fsp.lstat(base);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Isolation error: profile root must be a real directory');
+  } catch (error) {
+    if (error.code !== 'ENOENT' || options.allowMissing === false) throw error;
   }
   const relative = path.relative(base, child);
   let current = base;

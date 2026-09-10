@@ -408,7 +408,10 @@ function positiveProfileNumber(value) {
 }
 
 function normalizeProfileSettings(profile) {
-  const value = profile && typeof profile === 'object' ? profile : {};
+  const {
+    _secretsRedacted, password, platformPassword, totpSecret, totp_secret, otp,
+    proxyPassword, proxy_password, ...value
+  } = profile && typeof profile === 'object' ? profile : {};
   const privacy = value.privacy && typeof value.privacy === 'object' ? value.privacy : {};
   const advanced = value.advanced && typeof value.advanced === 'object' ? value.advanced : {};
   const proxyMeta = value.proxyMeta && typeof value.proxyMeta === 'object' ? value.proxyMeta : {};
@@ -446,8 +449,8 @@ function normalizeProfileSettings(profile) {
       type: String(platform.type || 'other'),
       startUrl: String(platform.startUrl || value.startUrl || ''),
       username: String(platform.username || ''),
-      password: String(platform.password || ''),
-      totpSecret: String(platform.totpSecret || platform.otp || ''),
+      password: String(platform.password ?? password ?? platformPassword ?? ''),
+      totpSecret: String(platform.totpSecret ?? platform.otp ?? totpSecret ?? totp_secret ?? otp ?? ''),
     },
     proxyMeta: {
       libraryProxyId: String(proxyMeta.libraryProxyId || ''),
@@ -478,6 +481,7 @@ function normalizeProfileSettings(profile) {
       })(),
     },
     privacy: {
+      fingerprintMode: privacy.fingerprintMode === 'native' ? 'native' : 'custom',
       webrtc: String(privacy.webrtc || 'proxy'),
       timezoneMode: String(privacy.timezoneMode || 'ip'),
       timezone: String(privacy.timezone || ''),
@@ -1044,8 +1048,10 @@ function redactProfileForStorage(profile) {
   const value = normalizeProfileSettings(profile);
   return {
     ...value,
+    _secretsRedacted: true,
     cookies: '',
     proxy: redactProxyForStorage(value.proxy),
+    proxyMeta: { ...value.proxyMeta, backupProxies: [], refreshUrl: '', apiExtractUrl: '' },
     platform: {
       ...(value.platform || {}),
       password: '',
@@ -1066,6 +1072,16 @@ const save = () => {
     localStorage.setItem(UI_KEY, JSON.stringify(safe));
   } catch (_) {}
 };
+
+async function persistUiProfiles(profiles, nextNumber = ui.nextProfileNumber) {
+  // Commit the renderer cache only after the main process accepts the update.
+  const status = await window.ops.syncProfiles(profiles);
+  ui.profiles = profiles;
+  ui.nextProfileNumber = nextNumber;
+  engineProfiles = status;
+  save();
+  return status;
+}
 function textDelayRange() { return syncSettings.delayInput ? [syncSettings.inputMinMs / 1000, syncSettings.inputMaxMs / 1000] : [0, 0]; }
 function fillSyncSettingsForm() {
   const checks = { '#settings-sync-keyboard': 'keyboard', '#settings-sync-click': 'click', '#settings-sync-scroll': 'scroll', '#settings-sync-track': 'track', '#settings-delay-click': 'delayClick', '#settings-delay-input': 'delayInput' };
@@ -1079,8 +1095,11 @@ function syncSettingsFromForm() {
   return normalizeSyncSettings({ keyboard: $('#settings-sync-keyboard').checked, click: $('#settings-sync-click').checked, scroll: $('#settings-sync-scroll').checked, track: $('#settings-sync-track').checked, delayClick: $('#settings-delay-click').checked, delayInput: $('#settings-delay-input').checked, inputMinMs: $('#settings-input-min').value, inputMaxMs: $('#settings-input-max').value, clickMinMs: $('#settings-click-min').value, clickMaxMs: $('#settings-click-max').value });
 }
 async function applySyncSettings(value, announce = false) {
-  syncSettings = normalizeSyncSettings(value); localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(syncSettings)); fillSyncSettingsForm();
-  await window.ops.setSyncSettings(syncSettings);
+  const next = normalizeSyncSettings(value);
+  await window.ops.setSyncSettings(next);
+  syncSettings = next;
+  try { localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(syncSettings)); } catch (_) {}
+  fillSyncSettingsForm();
   if (announce) toast('\u540c\u6b65\u8bbe\u7f6e\u5df2\u4fdd\u5b58\uff0c\u9f20\u6807\u548c\u952e\u76d8\u5f00\u5173\u5df2\u7acb\u5373\u751f\u6548');
 }
 const UI_THEME_KEY = 'aibrowser-ui-skin-v1';
@@ -1666,6 +1685,7 @@ function editorDraft(strict = true) {
   const tabMode = document.querySelector('input[name="editor-tab-mode"]:checked')?.value || 'fixed';
   const dntMode = $('#editor-dnt-mode')?.value || 'default';
   const privacy = {
+    fingerprintMode: $('#editor-fingerprint-mode')?.value === 'native' ? 'native' : 'custom',
     webrtc: $('#editor-webrtc')?.value || 'proxy',
     timezoneMode: $('#editor-timezone-mode')?.value || 'ip',
     timezone: ($('#editor-timezone')?.value || '').trim(),
@@ -1701,7 +1721,7 @@ function editorDraft(strict = true) {
     speech: $('#editor-speech')?.value || 'noise',
     deviceNameMode: $('#editor-device-name-mode')?.value || 'noise',
     deviceName: ($('#editor-device-name')?.value || '').trim(),
-    dnt: dntMode === 'on' || ($('#editor-dnt')?.checked === true),
+    dnt: dntMode === 'on',
     dntMode,
     portScanProtect: Boolean($('#editor-port-scan')?.checked),
     portScanAllow: ($('#editor-port-scan-allow')?.value || '').trim(),
@@ -1727,7 +1747,8 @@ function editorDraft(strict = true) {
       return Number.isFinite(n) ? n : '';
     })(),
     fingerprint: {
-      ...(current.privacy?.fingerprint || {}),
+      ...($('#editor-fingerprint-mode')?.value === 'native' || $('#editor-fingerprint-mode')?.dataset?.resetOverrides === 'true'
+        ? {} : (current.privacy?.fingerprint || {})),
       cores: (() => {
         const v = $('#editor-cores')?.value;
         if (v === '' || v == null) return undefined;
@@ -1879,6 +1900,12 @@ function editorDraft(strict = true) {
 }
 
 function updateEditorVisibility() {
+  const native = $('#editor-fingerprint-mode')?.value === 'native';
+  const controls = $('#editor-fingerprint-controls');
+  if (controls) controls.disabled = native;
+  const hint = $('#editor-native-fingerprint-hint');
+  if (hint) hint.hidden = !native;
+  if ($('#editor-apply-proxy-fp')) $('#editor-apply-proxy-fp').disabled = native;
   const custom = editorSelectedNetwork() === 'custom';
   const proxyFields = $('#editor-proxy-fields');
   if (proxyFields) {
@@ -1896,13 +1923,15 @@ function renderEditorSummary() {
   const draft = editorDraft(false); const privacy = draft.privacy; const summary = $('#editor-summary'); summary.replaceChildren();
   const labels = {
     webrtc: { proxy: tx('仅代理连接'), disabled: tx('禁用非代理 UDP'), real: tx('真实网络') }, timezoneMode: { ip: '基于出口 IP', real: '系统真实', custom: privacy.timezone || '自定义' },
-    geoMode: { ip: '基于出口 IP', disabled: '禁止访问', custom: '自定义坐标' }, canvas: { real: '真实', blocked: '禁止读取' }, webgl: { real: '真实', blocked: '禁用' },
+    geoMode: { ip: '基于出口 IP', prompt: '按网站询问', disabled: '禁止访问', custom: '自定义坐标' }, canvas: { real: '真实', blocked: '禁止读取' }, webgl: { real: '真实', blocked: '禁用' },
     audio: { real: '真实', muted: '静音输出' }, media: { real: '按网站询问', blocked: '禁止访问' }, speech: { real: '真实', blocked: '禁用' }
   };
   const values = [
-    [tx('浏览器'), 'Google Chrome'], [tx('分组'), groupNameOf(draft)], ['User-Agent', draft.userAgent || 'Chrome 默认'], [tx('网络'), maskProxy(draft.proxy)], ['WebRTC', labels.webrtc[privacy.webrtc]],
+    [tx('浏览器'), draft.kernel === 'firefox-reverse' ? 'Firefox-Reverse' : 'Chromium'], [tx('分组'), groupNameOf(draft)],
+    [tx('指纹模式'), privacy.fingerprintMode === 'native' ? tx('Google 默认（原生）') : tx('自定义指纹')],
+    ['User-Agent', draft.kernel === 'firefox-reverse' ? tx('由 Firefox-Reverse 内核管理') : (privacy.fingerprintMode === 'native' ? tx('浏览器原生') : (draft.userAgent || tx('按环境自动生成')))], [tx('网络'), maskProxy(draft.proxy)], ['WebRTC', labels.webrtc[privacy.webrtc]],
     [tx('时区'), labels.timezoneMode[privacy.timezoneMode]], [tx('地理位置'), labels.geoMode[privacy.geoMode]], [tx('语言'), draft.language], [tx('界面语言'), privacy.uiLanguage === 'profile' ? '跟随语言' : privacy.uiLanguage],
-    [tx('分辨率'), draft.width + ' × ' + draft.height], [tx('字体'), privacy.fontMode === 'custom' ? privacy.fontSize + 'px' : '默认'], ['Canvas', labels.canvas[privacy.canvas]],
+    [tx('分辨率'), privacy.fingerprintMode === 'native' ? tx('浏览器原生') : draft.width + ' × ' + draft.height], [tx('字体'), privacy.fontMode === 'custom' ? privacy.fontSize + 'px' : '默认'], ['Canvas', labels.canvas[privacy.canvas]],
     ['WebGL', labels.webgl[privacy.webgl]], ['WebGPU', privacy.webgpu === 'blocked' ? '禁用' : (privacy.webgpu === 'webgl' ? '基于 WebGL' : '真实')], ['AudioContext', labels.audio[privacy.audio]], [tx('媒体设备'), labels.media[privacy.media]],
     [tx('电池'), privacy.battery === 'blocked' ? '关闭' : (privacy.battery === 'real' ? '真实' : '随机')],
     [tx('站点稳定性'), privacy.stabilityMode === 'force' ? '强制' : (privacy.stabilityMode === 'off' ? '关闭' : '自动')],
@@ -2010,6 +2039,8 @@ function openProfileEditor(id) {
     $('#editor-proxy-result').textContent = profile.exitIp ? tx('上次出口：') + profile.exitIp + ' · ' + countryName(profile.exitCountryCode) : tx('尚未检测');
   }
   const privacy = profile.privacy;
+  editorSet('#editor-fingerprint-mode', privacy.fingerprintMode === 'native' ? 'native' : 'custom');
+  if ($('#editor-fingerprint-mode')) delete $('#editor-fingerprint-mode').dataset.resetOverrides;
   editorSet('#editor-webrtc', privacy.webrtc);
   editorSet('#editor-timezone-mode', privacy.timezoneMode);
   editorSet('#editor-timezone', privacy.timezone);
@@ -2129,7 +2160,7 @@ function formatProxyCheckResult(result = {}) {
 
 function applyEditorNetworkResult(result = {}, { fillFingerprint = true } = {}) {
   editorNetworkResult = result;
-  if (!fillFingerprint) return;
+  if (!fillFingerprint || $('#editor-fingerprint-mode')?.value === 'native') return;
   if (result.timezone) {
     editorSet('#editor-timezone-mode', 'ip');
     editorSet('#editor-timezone', result.timezone);
@@ -2220,11 +2251,35 @@ async function refreshEditorProxy() {
 }
 
 function useSystemEditorDefaults() {
-  editorSet('#editor-user-agent', ''); editorSet('#editor-timezone-mode', 'real'); editorSet('#editor-timezone', Intl.DateTimeFormat().resolvedOptions().timeZone || ''); editorSet('#editor-geo-mode', 'disabled'); editorSet('#editor-ui-language', 'system');
+  editorSet('#editor-fingerprint-mode', 'custom');
+  editorSet('#editor-user-agent', ''); editorSet('#editor-timezone-mode', 'real'); editorSet('#editor-timezone', Intl.DateTimeFormat().resolvedOptions().timeZone || ''); editorSet('#editor-geo-mode', 'disabled'); editorSet('#editor-language-mode', 'system'); editorSet('#editor-ui-language', 'profile');
   editorSet('#editor-resolution', 'custom'); editorSet('#editor-width', Math.max(640, screen.availWidth || 1280)); editorSet('#editor-height', Math.max(480, screen.availHeight || 820));
   editorSet('#editor-webrtc', 'real'); editorSet('#editor-canvas', 'real'); editorSet('#editor-webgl', 'real'); editorSet('#editor-webgpu', 'real'); editorSet('#editor-audio', 'real'); editorSet('#editor-media', 'real'); editorSet('#editor-speech', 'real');
-  updateEditorVisibility(); renderEditorSummary(); toast(tx('已读取本机安全默认值'));
+  updateEditorVisibility(); renderEditorSummary(); toast(tx('已读取本机基础参数；其他指纹配置请在指纹配置页确认'));
   refreshUaMetaPreview().catch(() => {});
+}
+
+function useGoogleEditorDefaults() {
+  editorSet('#editor-kernel', 'chromium');
+  editorSet('#editor-fingerprint-mode', 'native');
+  $('#editor-fingerprint-mode').dataset.resetOverrides = 'true';
+  const defaults = {
+    'user-agent': '', 'timezone-mode': 'real', timezone: '', 'geo-mode': 'prompt',
+    latitude: '', longitude: '', 'language-mode': 'system', 'ui-language': 'profile',
+    'font-mode': 'default', 'font-size': 16, webrtc: 'real', canvas: 'real', webgl: 'real',
+    'webgl-meta': 'real', webgpu: 'real', audio: 'real', media: 'real', 'media-devices': 'real',
+    battery: 'real', 'client-rects': 'real', speech: 'real', cores: '0', memory: '0',
+    'device-name-mode': 'real', 'device-name': '', 'dnt-mode': 'default', 'stability-mode': 'off',
+    'media-label-audio': '', 'media-label-video': '', 'media-label-output': '',
+  };
+  for (const [name, value] of Object.entries(defaults)) editorSet('#editor-' + name, value);
+  for (const name of ['refresh-fingerprint', 'lang-from-ip', 'geo-from-ip', 'dnt', 'cf-optimize']) editorCheck('#editor-' + name, false);
+  const preview = $('#editor-ua-meta');
+  if (preview) { preview.hidden = true; preview.textContent = ''; }
+  syncEditorKernelUi();
+  updateEditorVisibility();
+  renderEditorSummary();
+  toast(tx('已选择 Google 默认指纹环境（当前 Chromium 原生）；保存并重启该环境后生效'));
 }
 
 function editorOsToUaKey(osLabel) {
@@ -2251,7 +2306,7 @@ async function applyBuiltUa(payload) {
 async function showUaMetaPreview(ua) {
   const el = document.getElementById('editor-ua-meta');
   if (!el) return;
-  if (!ua) { el.hidden = true; el.textContent = ''; return; }
+  if (!ua || $('#editor-fingerprint-mode')?.value === 'native') { el.hidden = true; el.textContent = ''; return; }
   const meta = ua.metadata || ua.userAgentMetadata || {};
   const brands = (meta.brands || []).map((b) => `${b.brand} ${b.version}`).join(', ');
   el.hidden = false;
@@ -2265,6 +2320,7 @@ async function showUaMetaPreview(ua) {
 }
 
 async function refreshUaMetaPreview() {
+  if ($('#editor-fingerprint-mode')?.value === 'native') return showUaMetaPreview(null);
   const raw = document.getElementById('editor-user-agent')?.value?.trim() || '';
   if (!raw) {
     const el = document.getElementById('editor-ua-meta');
@@ -2534,9 +2590,7 @@ async function assignSelectedToGroup(groupId) {
   if (!ids.length) throw new Error(tx('请先勾选环境'));
   const gid = groupId === 'ungrouped' ? UNGROUPED_ID : groupId;
   if (gid && !findGroup(gid)) throw new Error(tx('分组不存在'));
-  ui.profiles = ui.profiles.map((p) => (ids.includes(p.id) ? { ...p, groupId: gid } : p));
-  save();
-  engineProfiles = await window.ops.syncProfiles(ui.profiles);
+  await persistUiProfiles(ui.profiles.map((p) => (ids.includes(p.id) ? { ...p, groupId: gid } : p)));
   renderProfiles();
   toast(tx(`已将 ${ids.length} 个环境移到「${gid ? groupNameOf({ groupId: gid }) : '未分组'}」`));
   log('Group', `批量移动 ${ids.length} 个环境 → ${gid || '未分组'}`);
@@ -4169,12 +4223,11 @@ $('#profile-form').addEventListener('submit', async (event) => {
       systemProxy: networkMode === 'system' ? 'use' : 'off',
       frontProxyMode: networkMode === 'proxy' && $('#create-proxy-system-front')?.checked ? 'system' : 'none',
     },
-    // Browser UI language defaults to exit-IP country; fixed locale is optional in editor.
-    privacy: { languageMode: 'ip', langFromIp: true, uiLanguage: 'profile' },
+    privacy: { languageMode: data.get('language') || 'en-US', langFromIp: false, uiLanguage: data.get('language') || 'en-US' },
   };
-  ui.profiles.push(profile); ui.nextProfileNumber = Math.max(positiveProfileNumber(previousNext), number + 1); save();
   try {
-    await window.ops.syncProfiles(ui.profiles); $('#profile-dialog').close(); form.reset();
+    await persistUiProfiles([...ui.profiles, profile], Math.max(positiveProfileNumber(previousNext), number + 1));
+    $('#profile-dialog').close(); form.reset();
     const directRadio = document.querySelector('input[name="create-network"][value="direct"]');
     if (directRadio) directRadio.checked = true;
     const fields = $('#create-proxy-fields'); if (fields) fields.hidden = true;
@@ -4182,7 +4235,7 @@ $('#profile-form').addEventListener('submit', async (event) => {
     await refreshStatus(); log('Profile', '创建环境 ' + number + ' · ' + networkLabel);
     toast(isDirectProxy(proxy) && networkMode === 'proxy' ? '未填写代理，已自动切换为本地直连' : `已创建（${networkLabel}）`);
   } catch (error) {
-    ui.profiles = ui.profiles.filter((item) => item.id !== profile.id); ui.nextProfileNumber = previousNext; save(); toast('创建失败：' + error.message);
+    toast('创建失败：' + error.message);
   }
 });
 
@@ -4193,6 +4246,11 @@ $('#editor-test-proxy')?.addEventListener('click', testEditorProxy);
 $('#editor-apply-proxy-fp')?.addEventListener('click', applyEditorProxyFingerprint);
 $('#editor-refresh-proxy')?.addEventListener('click', refreshEditorProxy);
 $('#editor-system-defaults').addEventListener('click', useSystemEditorDefaults);
+$('#editor-google-defaults').addEventListener('click', useGoogleEditorDefaults);
+$('#editor-fingerprint-mode').addEventListener('change', () => {
+  if ($('#editor-fingerprint-mode').value === 'native') useGoogleEditorDefaults();
+  else { updateEditorVisibility(); renderEditorSummary(); }
+});
 const editorProxySelector = '#editor-proxy-type,#editor-proxy-host,#editor-proxy-port,#editor-proxy-user,#editor-proxy-password,#editor-proxy-system-front,input[name="editor-network"]';
 const onEditorFormChange = (event) => {
   if (event.target.matches(editorProxySelector)) {
@@ -4289,6 +4347,7 @@ document.getElementById('editor-clear-cache-cookie')?.addEventListener('click', 
  */
 function syncEditorKernelUi() {
   const external = $('#editor-kernel')?.value === 'firefox-reverse';
+  if (external) editorSet('#editor-fingerprint-mode', 'custom');
   const hint = $('#editor-kernel-hint');
   if (hint) {
     hint.textContent = external
@@ -4330,6 +4389,7 @@ $('#profile-create-kernel')?.addEventListener('change', (event) => {
 
 $('#profile-editor-form').addEventListener('submit', async (event) => {
   event.preventDefault(); const index = ui.profiles.findIndex((item) => item.id === editingProfileId); if (index < 0) return toast(tx('环境不存在'));
+  const submitter = event.submitter; if (submitter) submitter.disabled = true;
   try {
     const previous = ui.profiles[index]; const draft = editorDraft(true);
     if (!draft.number || draft.number > 999999) throw new Error('环境编号必须是 1-999999 的整数');
@@ -4337,11 +4397,12 @@ $('#profile-editor-form').addEventListener('submit', async (event) => {
     const switchedToDirect = editorSelectedNetwork() !== 'direct' && isDirectProxy(draft.proxy);
     if (draft.proxy !== previous.proxy && !editorNetworkResult) { delete draft.exitIp; delete draft.exitCountryCode; delete draft.exitTimezone; delete draft.exitLatitude; delete draft.exitLongitude; delete draft.exitCheckedAt; }
     draft.updatedAt = new Date().toISOString();
-    ui.profiles[index] = draft;
-    ui.nextProfileNumber = Math.max(positiveProfileNumber(ui.nextProfileNumber), draft.number + 1);
-    save(); engineProfiles = await window.ops.syncProfiles(ui.profiles); renderProfiles();
+    const profiles = ui.profiles.map((item, position) => position === index ? draft : item);
+    await persistUiProfiles(profiles, Math.max(positiveProfileNumber(ui.nextProfileNumber), draft.number + 1));
+    renderProfiles();
     const running = profileEngine(draft.id).running; log('Profile', '已更新环境 ' + displayProfileNumber(draft)); editingProfileId = null; editorNetworkResult = null; switchView('profiles'); toast(switchedToDirect ? '未填写代理，已自动切换为本地直连' : (running ? '设置已保存，请重启该环境后生效' : '环境设置已保存'));
   } catch (error) { toast('保存失败：' + error.message); }
+  finally { if (submitter) submitter.disabled = false; }
 });
 
 $('#batch-add').addEventListener('click', () => {
@@ -4371,7 +4432,7 @@ $('#batch-add-form').addEventListener('submit', async (event) => {
   const used = new Set(ui.profiles.map((item) => item.id)); const created = [];
   while (created.length < count) {
     const number = numbers[created.length]; const id = createInternalProfileId(number, used); used.add(id);
-    created.push({ id, number, name: String(number), browser: 'Google Chrome', language, networkMode: proxies.length ? 'proxy' : networkMode, proxy: proxies.length ? proxies[created.length] : (networkMode === 'system' ? 'System' : 'Direct'), tag, groupId, os: 'Windows', location: 'Local' });
+    created.push({ id, number, name: String(number), browser: 'Google Chrome', language, privacy: { languageMode: language, langFromIp: false, uiLanguage: language }, networkMode: proxies.length ? 'proxy' : networkMode, proxy: proxies.length ? proxies[created.length] : (networkMode === 'system' ? 'System' : 'Direct'), tag, groupId, os: 'Windows', location: 'Local' });
   }
   try {
     const verified = proxies.length ? await verifyProxyAssignments(created, proxies) : [];
@@ -4379,14 +4440,14 @@ $('#batch-add-form').addEventListener('submit', async (event) => {
       const result = verified[index]; if (!result) return;
       profile.exitIp = result.ip; profile.exitCountryCode = result.countryCode; profile.exitTimezone = result.timezone || ''; profile.exitLatitude = result.latitude; profile.exitLongitude = result.longitude; profile.exitCheckedAt = result.checkedAt;
     });
-    ui.profiles.push(...created); ui.nextProfileNumber = Math.max(positiveProfileNumber(previousNext), ...numbers.map((number) => number + 1)); save(); engineProfiles = await window.ops.syncProfiles(ui.profiles);
+    await persistUiProfiles([...ui.profiles, ...created], Math.max(positiveProfileNumber(previousNext), ...numbers.map((number) => number + 1)));
     selectedProfiles = new Set(created.map((item) => item.id)); $('#select-all-profiles').checked = false; $('#batch-add-dialog').close(); $('#batch-add-proxies').value = '';
     await refreshStatus(); await refreshExtensions(); renderProfiles();
     const networkLabel = networkMode === 'direct' ? '本地直连' : (networkMode === 'system' ? '系统代理' : '自定义代理');
     log('Batch', '批量新增 ' + created.length + ' 个环境 · ' + networkLabel);
     toast('已批量创建 ' + created.length + ' 个环境（' + networkLabel + '）');
   } catch (error) {
-    ui.profiles = ui.profiles.filter((item) => !created.some((createdItem) => createdItem.id === item.id)); ui.nextProfileNumber = previousNext; save(); toast('批量新增失败：' + error.message);
+    toast('批量新增失败：' + error.message);
   }
 });
 async function openProfileDeleteDialog(ids) {
@@ -4807,7 +4868,12 @@ async function sendRandomNumbers() {
 $('#send-text').addEventListener('click', sendSameText);
 $('#send-random-number').addEventListener('click', sendRandomNumbers);
 $('#sync-settings-button').addEventListener('click', () => { fillSyncSettingsForm(); $('#sync-settings-dialog').showModal(); });
-$('#sync-settings-form').addEventListener('submit', async (event) => { event.preventDefault(); if (event.submitter?.value === 'cancel') return $('#sync-settings-dialog').close('cancel'); await applySyncSettings(syncSettingsFromForm(), true); $('#sync-settings-dialog').close(); });
+$('#sync-settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (event.submitter?.value === 'cancel') return $('#sync-settings-dialog').close('cancel');
+  try { await applySyncSettings(syncSettingsFromForm(), true); $('#sync-settings-dialog').close(); }
+  catch (error) { toast('同步设置保存失败：' + error.message); }
+});
 $('#delay-input').addEventListener('change', () => applySyncSettings({ ...syncSettings, delayInput: $('#delay-input').checked }));
 $('#delay-click').addEventListener('change', () => applySyncSettings({ ...syncSettings, delayClick: $('#delay-click').checked }));
 $('#clear-text').addEventListener('click', () => runSyncAction('清空内容', () => window.ops.textAction(selectedSessionIds(), 'clear', '', 0, 0)));
@@ -5309,6 +5375,20 @@ function updateEngineBadge(info) {
   badge.setAttribute('aria-label', badge.title);
 }
 
+function restoreProfilesFromEngine(localProfiles, engineStatus) {
+  if (!Array.isArray(engineStatus)) throw new Error('环境配置读取失败');
+  const byId = new Map(engineStatus.map((item) => [item.id, item]));
+  const restored = localProfiles.map((local) => normalizeProfileSettings({ ...local, ...(byId.get(local.id) || {}) }));
+  const knownIds = new Set(restored.map((item) => item.id));
+  for (const remote of engineStatus) {
+    if (!knownIds.has(remote.id)) {
+      restored.push(normalizeProfileSettings(remote));
+      knownIds.add(remote.id);
+    }
+  }
+  return restored;
+}
+
 async function initialize() {
   refreshLocaleChrome();
   const info = await window.ops.getInfo();
@@ -5320,33 +5400,9 @@ async function initialize() {
   syncState = await window.ops.getSyncState(); preferredMasterId = syncState.master || null; if (syncState.active) selectedSessions = new Set(syncState.selected || []);
   await applySyncSettings(syncSettings); fillSyncSettingsForm();
   ui.profiles = ui.profiles.map((item) => ({ ...item, browser: 'Google Chrome' }));
-  // Merge secrets already loaded in main process (not stored in localStorage).
-  try {
-    const engineStatus = await window.ops.profileStatus();
-    if (Array.isArray(engineStatus) && engineStatus.length) {
-      const byId = new Map(engineStatus.map((item) => [item.id, item]));
-      ui.profiles = ui.profiles.map((local) => {
-        const remote = byId.get(local.id);
-        if (!remote) return local;
-        return normalizeProfileSettings({
-          ...local,
-          cookies: local.cookies || remote.cookies || '',
-          proxy: local.proxy && !/^(direct)$/i.test(local.proxy) ? local.proxy : (remote.proxy || local.proxy),
-          platform: {
-            ...(local.platform || {}),
-            password: local.platform?.password || remote.platform?.password || '',
-            totpSecret: local.platform?.totpSecret || remote.platform?.totpSecret || '',
-          },
-        });
-      });
-      // Engine-only profiles (restored from disk) not yet in UI list
-      for (const remote of engineStatus) {
-        if (!ui.profiles.some((item) => item.id === remote.id)) {
-          ui.profiles.push(normalizeProfileSettings(remote));
-        }
-      }
-    }
-  } catch (_) {}
+  // The engine owns saved profile settings. The renderer cache is redacted and
+  // can be older than changes made through the API, cloud restore, or browser close.
+  ui.profiles = restoreProfilesFromEngine(ui.profiles, await window.ops.profileStatus());
   save();
   engineProfiles = await window.ops.syncProfiles(ui.profiles); await refreshExtensions(); await refreshSessions(); renderProfiles(); renderLogs();
   log('System', readyBrowserLog(info));
@@ -5365,26 +5421,85 @@ async function startConfiguredDefaultProfiles() {
 }
 function readyBrowserLog(info) {
   const n = Array.isArray(info?.browsers) ? info.browsers.length : 0;
-  return n > 0 ? `引擎启动 · ${n} 个浏览器可用` : '引擎启动 · 未找到浏览器';
+  return n > 0 ? `引擎启动 · 检测到 ${n} 个浏览器程序` : '引擎启动 · 未检测到浏览器程序';
 }
-initialize().catch((error) => {
+// Do not let early clicks submit the redacted cache before engine state loads.
+document.body.inert = true;
+const uiInitialization = initialize().catch((error) => {
   updateEngineBadge({ browsers: [] });
   log('Error', error.message);
   toast(error.message);
-});
+}).finally(() => { document.body.inert = false; });
 
 
-function parseCsvLine(line) {
-  const values = []; let current = ''; let quoted = false;
-  for (let index = 0; index < line.length; index += 1) { const char = line[index]; if (char === '"' && line[index + 1] === '"') { current += '"'; index += 1; } else if (char === '"') quoted = !quoted; else if (char === ',' && !quoted) { values.push(current.trim()); current = ''; } else current += char; }
-  values.push(current.trim()); return values;
+function parseCsvRows(text) {
+  const rows = []; let row = []; let current = ''; let quoted = false;
+  const source = String(text || '').replace(/^\uFEFF/, '');
+  const pushRow = () => { row.push(current); if (row.some((value) => value.trim())) rows.push(row); row = []; current = ''; };
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '"' && quoted && source[index + 1] === '"') { current += '"'; index += 1; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === ',' && !quoted) { row.push(current); current = ''; }
+    else if (!quoted && (char === '\n' || char === '\r')) {
+      pushRow();
+      if (char === '\r' && source[index + 1] === '\n') index += 1;
+    } else current += char;
+  }
+  if (quoted) throw new Error('CSV 引号未闭合');
+  if (current || row.length) pushRow();
+  return rows;
 }
 
 function parseImportedProfiles(text, extension) {
-  if (extension === 'json') { const values = JSON.parse(text); if (!Array.isArray(values)) throw new Error('\u5bfc\u5165 JSON \u5fc5\u987b\u662f\u6570\u7ec4'); return values; }
-  const lines = text.split(/\r?\n/).filter((line) => line.trim()); if (lines.length < 2) return [];
-  const headers = parseCsvLine(lines[0]).map((item) => item.toLowerCase());
-  return lines.slice(1).map((line, row) => { const values = parseCsvLine(line); const item = Object.fromEntries(headers.map((key, index) => [key, values[index] || ''])); return { id: item.id || 'env-import-' + Date.now().toString(36) + '-' + row, name: item.name || item.id || 'Imported ' + (row + 1), browser: item.browser || 'Google Chrome', language: item.language || 'en-US', proxy: item.proxy || item.ip || 'Direct', proxyType: item.proxytype || '', exitIp: item.ip || '', exitCountryCode: item.countrycode || '', tag: item.tag || item.group || 'Imported', os: 'Windows', location: item.location || 'Local' }; });
+  if (extension === 'json') {
+    const values = JSON.parse(String(text).replace(/^\uFEFF/, ''));
+    if (!Array.isArray(values) || values.some((item) => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error('导入 JSON 必须是环境对象数组');
+    return values;
+  }
+  const rows = parseCsvRows(text); if (rows.length < 2) return [];
+  const headers = rows[0].map((item) => item.trim().toLowerCase());
+  return rows.slice(1).map((values) => {
+    const item = Object.fromEntries(headers.map((key, index) => [key, values[index] || '']));
+    return {
+      ...item,
+      title: item.title || item.name || '',
+      kernel: item.kernel || 'chromium',
+      networkMode: item.networkmode || undefined,
+      proxy: item.proxy || item.ip || 'Direct',
+      proxyType: item.proxytype || '',
+      exitIp: item.exitip || item.ip || '',
+      exitCountryCode: item.exitcountrycode || item.countrycode || '',
+      groupId: item.groupid || '',
+      platform: { type: item.platformtype || 'other', startUrl: item.starturl || '', username: item.username || '', password: item.password || '', totpSecret: item.totpsecret || '' },
+    };
+  });
+}
+
+function prepareImportedProfiles(imported) {
+  if (ui.profiles.length + imported.length > 1000) throw new Error('环境总数不能超过 1000');
+  const numbers = availableProfileNumbers(imported.length);
+  const used = new Set(ui.profiles.map((item) => item.id));
+  return imported.map((item, index) => {
+    const number = numbers[index];
+    const id = createInternalProfileId(number, used, { fresh: true }); used.add(id);
+    const profile = normalizeProfileSettings({
+      ...item,
+      id, number, name: String(number),
+      title: item.title || item.displayName || item.name || '',
+      language: item.language || 'en-US',
+      proxy: item.proxy || item.ip || 'Direct',
+      cookies: Array.isArray(item.cookies) ? JSON.stringify(item.cookies) : item.cookies,
+      privacy: item.privacy || (item.language ? { languageMode: item.language, langFromIp: false, uiLanguage: item.language } : {}),
+      tag: item.tag || item.group || 'Imported',
+    });
+    // Library IDs belong to the source installation. Imported raw proxies must
+    // never resolve to an unrelated local subscription with the same ID.
+    profile.proxyMeta.libraryProxyId = '';
+    profile.proxyMeta.frontProxyHandledByLibrary = false;
+    if (!findGroup(profile.groupId)) profile.groupId = UNGROUPED_ID;
+    return profile;
+  });
 }
 
 $('#batch-import').addEventListener('click', () => $('#batch-import-file').click());
@@ -5401,20 +5516,20 @@ $('#profiles-sync-floating')?.addEventListener('click', async (event) => {
 });
 $('#batch-import-file').addEventListener('change', async (event) => {
   const file = event.target.files[0]; if (!file) return;
-  const previousLength = ui.profiles.length; const previousNext = ui.nextProfileNumber;
   try {
     const extension = file.name.toLowerCase().endsWith('.json') ? 'json' : 'csv'; const imported = parseImportedProfiles(await file.text(), extension);
-    const numbers = availableProfileNumbers(imported.length); const used = new Set(ui.profiles.map((item) => item.id));
-    const normalized = imported.map((item, index) => { const number = numbers[index]; const id = createInternalProfileId(number, used); used.add(id); return { id, number, name: String(number), browser: 'Google Chrome', language: String(item.language || 'en-US'), proxy: String(item.proxy || item.ip || 'Direct'), proxyType: String(item.proxyType || item.proxytype || ''), exitIp: String(item.exitIp || item.ip || ''), exitCountryCode: String(item.exitCountryCode || item.countrycode || ''), tag: String(item.tag || item.group || 'Imported'), os: 'Windows', location: String(item.location || 'Local') }; });
-    ui.profiles.push(...normalized); ui.nextProfileNumber = numbers.length ? Math.max(positiveProfileNumber(previousNext), ...numbers.map((number) => number + 1)) : positiveProfileNumber(previousNext); save(); engineProfiles = await window.ops.syncProfiles(ui.profiles); renderProfiles(); log('Import', '\u6279\u91cf\u5bfc\u5165 ' + normalized.length + ' \u4e2a\u73af\u5883'); toast('\u5df2\u5bfc\u5165 ' + normalized.length + ' \u4e2a\u73af\u5883');
-  } catch (error) { ui.profiles = ui.profiles.slice(0, previousLength); ui.nextProfileNumber = previousNext; save(); toast('\u5bfc\u5165\u5931\u8d25\uff1a' + error.message); }
-  event.target.value = '';
+    const normalized = prepareImportedProfiles(imported);
+    if (!normalized.length) return toast('文件中没有可导入的环境');
+    await persistUiProfiles([...ui.profiles, ...normalized], Math.max(positiveProfileNumber(ui.nextProfileNumber), ...normalized.map((profile) => profile.number + 1)));
+    renderProfiles(); log('Import', '\u6279\u91cf\u5bfc\u5165 ' + normalized.length + ' \u4e2a\u73af\u5883'); toast('\u5df2\u5bfc\u5165 ' + normalized.length + ' \u4e2a\u73af\u5883');
+  } catch (error) { toast('\u5bfc\u5165\u5931\u8d25\uff1a' + error.message); }
+  finally { event.target.value = ''; }
 });
 
 async function applySelectedNetworkMode(mode, { proxies = null, restart = true } = {}) {
   const ids = ui.profiles.filter((profile) => selectedProfiles.has(profile.id)).map((profile) => profile.id);
   if (!ids.length) throw new Error(tx('请先选择环境'));
-  const profiles = ids.map((id) => ui.profiles.find((profile) => profile.id === id));
+  const profiles = ids.map((id) => normalizeProfileSettings(ui.profiles.find((profile) => profile.id === id)));
   const normalizedMode = mode === 'system' ? 'system' : (mode === 'proxy' ? 'proxy' : 'direct');
   const custom = normalizedMode === 'proxy';
   let list; let verified;
@@ -5436,6 +5551,13 @@ async function applySelectedNetworkMode(mode, { proxies = null, restart = true }
     profile.networkMode = normalizedMode;
     profile.proxyMeta = {
       ...(profile.proxyMeta || {}),
+      libraryProxyId: '',
+      frontProxyMode: 'none',
+      frontProxyHandledByLibrary: false,
+      backupProxies: [],
+      apiExtractUrl: '',
+      refreshUrl: '',
+      refreshOnStart: false,
       systemProxy: normalizedMode === 'system' ? 'use' : (normalizedMode === 'direct' ? 'off' : 'global'),
     };
     const result = verified[index];
@@ -5447,8 +5569,16 @@ async function applySelectedNetworkMode(mode, { proxies = null, restart = true }
       delete profile.exitLatitude; delete profile.exitLongitude; delete profile.exitCheckedAt;
     }
   });
-  save();
-  engineProfiles = await window.ops.syncProfiles(ui.profiles);
+  const replacements = new Map(profiles.map((profile) => [profile.id, profile]));
+  try {
+    await persistUiProfiles(ui.profiles.map((profile) => replacements.get(profile.id) || profile));
+  } catch (error) {
+    if (restart) for (const id of runningBefore) {
+      const previous = ui.profiles.find((profile) => profile.id === id);
+      if (previous) await window.ops.startProfile(previous).catch((restartError) => log('Error', restartError.message));
+    }
+    throw error;
+  }
   if (restart) for (const id of runningBefore) {
     const profile = ui.profiles.find((item) => item.id === id);
     if (profile) await window.ops.startProfile(profile);

@@ -728,7 +728,10 @@ class StartPageServer {
         : (profile.networkMode === 'direct' || !profile.proxy || /^(direct|offline|none)$/i.test(String(profile.proxy))
           ? 'direct'
           : String(profile.proxy).split(':', 1)[0].toLowerCase()),
-      expectedFingerprint: {
+      // Native mode has no generated identity to match. In particular, saved
+      // editor window dimensions and old IP-derived locale are not its screen
+      // size or browser locale and must not become expected fingerprint values.
+      expectedFingerprint: profile.privacy?.fingerprintMode === 'native' ? { native: true } : {
         ...(extras.expectedFingerprint && typeof extras.expectedFingerprint === 'object' ? extras.expectedFingerprint : {}),
         language: String(
           (extras.expectedFingerprint && extras.expectedFingerprint.language)

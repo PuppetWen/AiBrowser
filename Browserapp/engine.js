@@ -12,8 +12,8 @@ const { resolveProfileLanguage, localeFromCountryCode } = require('./automation/
 const { mergeLoadExtensionArgs } = require('./automation/protocol/app-center-protocol');
 const { prepareMarkerExtension, prepareMacDockWrapper, normalizeEnvNumber } = require('./automation/env-icon');
 const { toFileUrl, killProcessTree } = require('./automation/protocol/cross-platform');
-const { buildFingerprint, buildWorkerInjectionScript, chromeArgsForFingerprint, applyFingerprintToTab } = require('./automation/fingerprint');
-const { acquireProfileLock, releaseProfileLock, auditIsolation, isSystemBrowserExecutable, isPathInsideOrEqual, validateDataRootIsolationSecure, validateProfileRootSecure, assertProfileId, assertSafeProfileChild } = require('./automation/isolation');
+const { buildFingerprint, buildWorkerInjectionScript, chromeArgsForFingerprint, applyFingerprintToTab, isNativeFingerprintProfile } = require('./automation/fingerprint');
+const { acquireProfileLock, releaseProfileLock, isPidAlive, auditIsolation, isSystemBrowserExecutable, isPathInsideOrEqual, validateDataRootIsolationSecure, validateProfileRootSecure, assertProfileId, assertSafeProfileChild } = require('./automation/isolation');
 const { BrowserKernelManager, ensureKernelReadyForLaunch } = require('./automation/browser-kernel');
 const { ensureStartPageServer, getStartPageServer } = require('./automation/start-page-server');
 const { resolveSystemProxy } = require('./automation/system-proxy');
@@ -24,17 +24,19 @@ const {
 } = require('./automation/kernel-init-sync');
 const { fpLog, summarizeFp, LIVE_PROBE_EXPRESSION, logPath: fingerprintLogPath } = require('./automation/fingerprint-debug-log');
 const { rebasePortablePath, rebasePortableFileUrl } = require('./portable-paths');
+const { clearFirefoxSessionCookies } = require('./automation/firefox-sessionstore');
 
 const KERNEL_POLICY_VERSION = 4;
 
-function localizedBrowserEnvironment(userDataPath) {
+async function localizedBrowserEnvironment(userDataPath) {
   const root = path.resolve(String(userDataPath || '.'));
   const appData = path.join(root, 'wayfern-appdata');
   const localAppData = path.join(root, 'localappdata');
   const temp = path.join(root, 'cache', 'temp');
   const crashDumps = path.join(root, 'crash-dumps', 'firefox');
   for (const directory of [appData, localAppData, temp, crashDumps]) {
-    try { fs.mkdirSync(directory, { recursive: true }); } catch (_) {}
+    await assertSafeProfileChild(root, directory);
+    await fsp.mkdir(directory, { recursive: true });
   }
   return {
     ...process.env,
@@ -184,6 +186,8 @@ class BrowserEngine {
     this.app = app;
     this.profiles = new Map();
     this.running = new Map();
+    this.starting = new Map();
+    this.persistenceQueue = Promise.resolve();
     this.networkInfo = new Map();
     this.extensions = new Map();
     this.assignments = new Map();
@@ -276,6 +280,7 @@ class BrowserEngine {
         for (const raw of saved.profiles.slice(0, 1000)) {
           try {
             const profile = this.sanitizeProfile(raw);
+            this.assertProfileIdentity(profile.id);
             this.profiles.set(profile.id, profile);
           } catch (_) {}
         }
@@ -321,9 +326,8 @@ class BrowserEngine {
   }
 
   async persist() {
-    await fsp.mkdir(path.dirname(this.stateFile), { recursive: true });
     const assignments = Object.fromEntries([...this.assignments].map(([id, values]) => [id, [...values]]));
-    await fsp.writeFile(this.stateFile, JSON.stringify({
+    const contents = JSON.stringify({
       extensions: [...this.extensions.values()],
       assignments,
       profiles: [...this.profiles.values()],
@@ -331,7 +335,20 @@ class BrowserEngine {
       preferIndependentKernel: this.preferIndependentKernel,
       allowSystemBrowserFallback: this.allowSystemBrowserFallback,
       systemBrowserPath: this.systemBrowserPath,
-    }, null, 2), 'utf8');
+    }, null, 2);
+    const write = async () => {
+      await fsp.mkdir(path.dirname(this.stateFile), { recursive: true });
+      const temporary = this.stateFile + '.' + crypto.randomBytes(12).toString('hex') + '.tmp';
+      try {
+        await fsp.writeFile(temporary, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+        await fsp.rename(temporary, this.stateFile);
+      } finally {
+        await fsp.rm(temporary, { force: true }).catch(() => {});
+      }
+    };
+    const pending = this.persistenceQueue.then(write, write);
+    this.persistenceQueue = pending.catch(() => {});
+    return pending;
   }
 
   kernelStatus() {
@@ -481,6 +498,7 @@ class BrowserEngine {
         })(),
       },
       privacy: {
+        fingerprintMode: allowed(privacyValue.fingerprintMode, ['custom', 'native'], 'custom'),
         webrtc: allowed(privacyValue.webrtc, ['proxy', 'disabled', 'real'], 'proxy'),
         timezoneMode: allowed(privacyValue.timezoneMode, ['ip', 'real', 'custom'], 'ip'),
         timezone: String(privacyValue.timezone || '').slice(0, 100),
@@ -591,9 +609,27 @@ class BrowserEngine {
     };
   }
 
-  syncProfiles(values) {
+  assertProfileIdentity(id, collection = this.profiles.values()) {
+    const safe = assertProfileId(id);
+    for (const profile of collection) {
+      if (profile.id !== safe && String(profile.id).toLowerCase() === safe.toLowerCase()) {
+        throw new Error(`Environment id ${safe} conflicts with ${profile.id} on a case-insensitive filesystem`);
+      }
+    }
+    return safe;
+  }
+
+  syncProfiles(values, { waitForPersistence = false } = {}) {
     if (!Array.isArray(values) || values.length > 1000) throw new Error('Invalid profile list');
     const sanitizedProfiles = values.map((value) => this.sanitizeProfile(value));
+    const usedIds = new Set();
+    for (const profile of sanitizedProfiles) {
+      this.assertProfileIdentity(profile.id);
+      const key = profile.id.toLowerCase();
+      if (usedIds.has(key)) throw new Error(`Duplicate environment id: ${profile.id}`);
+      usedIds.add(key);
+    }
+    const redactedIds = new Set(values.filter((value) => value._secretsRedacted === true).map((value) => value.id));
     const usedNumbers = new Set();
     for (const profile of sanitizedProfiles) {
       if (!profile.number) continue;
@@ -610,42 +646,34 @@ class BrowserEngine {
       // UI may send redacted proxy (no auth) after localStorage reload. Prefer previous
       // authenticated form only when host:port match and incoming lacks credentials.
       let merged = profile;
-      if (previous) {
+      if (previous && redactedIds.has(profile.id)) {
         const nextProxy = String(profile.proxy || '');
         const prevProxy = String(previous.proxy || '');
-        const nextHasAuth = /:\/\/[^/@]+@/.test(nextProxy) || nextProxy.split(':').length >= 4;
-        const prevHasAuth = /:\/\/[^/@]+@/.test(prevProxy) || prevProxy.split(':').length >= 4;
-        if (!nextHasAuth && prevHasAuth) {
-          try {
-            const prev = parseProxy(prevProxy);
-            const bare = parseProxy(nextProxy);
-            if (prev && bare && prev.host === bare.host && prev.port === bare.port) {
-              merged = this.sanitizeProfile({ ...profile, proxy: prevProxy });
-            }
-          } catch (_) {}
-        }
-        // Restore cookies/platform secrets only when UI clearly redacted ALL of them
-        // (post-localStorage load) while engine still holds values — not when user
-        // intentionally cleared a single field in the editor.
-        const uiLooksRedacted = !String(profile.cookies || '').trim()
-          && !String(profile.platform?.password || '').trim()
-          && !String(profile.platform?.totpSecret || '').trim()
-          && (
-            String(previous.cookies || '').trim()
-            || String(previous.platform?.password || '').trim()
-            || String(previous.platform?.totpSecret || '').trim()
-          );
-        if (uiLooksRedacted) {
-          merged = this.sanitizeProfile({
-            ...merged,
-            cookies: previous.cookies || '',
-            platform: {
-              ...(merged.platform || {}),
-              password: previous.platform?.password || '',
-              totpSecret: previous.platform?.totpSecret || '',
-            },
-          });
-        }
+        try {
+          const prev = parseProxy(prevProxy);
+          const bare = parseProxy(nextProxy);
+          if (prev?.authenticated && bare && !bare.authenticated
+            && prev.protocol === bare.protocol && prev.host.toLowerCase() === bare.host.toLowerCase() && prev.port === bare.port) {
+            merged = this.sanitizeProfile({ ...profile, proxy: prevProxy });
+          }
+        } catch (_) {}
+        // Only an explicitly redacted cache record may restore hidden secrets.
+        // Empty editor fields are intentional and must remain empty.
+        merged = this.sanitizeProfile({
+          ...merged,
+          cookies: previous.cookies || '',
+          proxyMeta: {
+            ...merged.proxyMeta,
+            backupProxies: previous.proxyMeta?.backupProxies || [],
+            refreshUrl: previous.proxyMeta?.refreshUrl || '',
+            apiExtractUrl: previous.proxyMeta?.apiExtractUrl || '',
+          },
+          platform: {
+            ...(merged.platform || {}),
+            password: previous.platform?.password || '',
+            totpSecret: previous.platform?.totpSecret || '',
+          },
+        });
       }
       if (previous && (previous.proxy !== merged.proxy || previous.networkMode !== merged.networkMode)) this.networkInfo.delete(profile.id);
       this.profiles.set(merged.id, merged);
@@ -662,8 +690,10 @@ class BrowserEngine {
       }
     }
     // Do not drop unknown engine profiles here — deleteProfiles is the explicit path.
-    this.persist().catch((error) => this.emit({ type: 'sync-error', action: 'persist-profiles', message: error.message }));
-    return this.status();
+    const persistence = this.persist();
+    persistence.catch((error) => this.emit({ type: 'sync-error', action: 'persist-profiles', message: error.message }));
+    const status = this.status();
+    return waitForPersistence ? persistence.then(() => status) : status;
   }
 
   getProfileDataRoot() { return this.profileDataRootPath; }
@@ -685,16 +715,17 @@ class BrowserEngine {
   }
 
   setProfileDataRoot(value) {
+    if (this.restoringBackup) throw new Error('请等待备份恢复完成后再更改环境数据目录');
     const raw = String(value || '').trim();
     if (!raw) throw new Error('Environment data directory is required');
-    if (this.running.size) throw new Error('Stop all browser environments before changing the data directory');
+    if (this.running.size || this.starting.size) throw new Error('Stop all browser environments before changing the data directory');
     const check = validateDataRootIsolationSecure(raw);
     if (!check.ok) throw new Error(check.message);
     this.profileDataRootPath = check.root;
     return this.profileDataRootPath;
   }
 
-  profileRoot(id) { return path.join(this.profileDataRootPath, assertProfileId(id)); }
+  profileRoot(id) { return path.join(this.profileDataRootPath, this.assertProfileIdentity(id)); }
 
   browserSelection() {
     const list = this.candidates();
@@ -775,7 +806,7 @@ class BrowserEngine {
   }
 
   async resetZoom(root) {
-    const file = path.join(root, 'Default', 'Preferences');
+    const file = await assertSafeProfileChild(root, path.join(root, 'Default', 'Preferences'));
     try { const prefs = JSON.parse(await fsp.readFile(file, 'utf8')); if (prefs.partition) prefs.partition.per_host_zoom_levels = {}; if (prefs.browser && 'default_zoom_level' in prefs.browser) prefs.browser.default_zoom_level = 0; await fsp.writeFile(file, JSON.stringify(prefs), 'utf8'); } catch (_) {}
   }
 
@@ -789,39 +820,96 @@ class BrowserEngine {
 
   async clearProfileCache(root) {
     const base = path.join(root, 'Default');
-    for (const name of ['Cache', 'Code Cache', 'GPUCache', path.join('Service Worker', 'CacheStorage')]) {
-      const target = await assertSafeProfileChild(root, path.join(base, name));
-      await fsp.rm(target, { recursive: true, force: true }).catch(() => {});
+    const targets = ['Cache', 'Code Cache', 'GPUCache', path.join('Service Worker', 'CacheStorage')].map((name) => path.join(base, name));
+    targets.push(...await this.firefoxDataTargets(root, { cache: true }));
+    for (const target of targets) await assertSafeProfileChild(root, target);
+    for (const target of targets) await fsp.rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
+  }
+
+  async firefoxDataTargets(root, options = {}) {
+    const base = path.join(root, 'firefox-profile');
+    const targets = [];
+    const add = (...names) => targets.push(...names.map((name) => path.join(base, name)));
+    const database = (name) => add(name, name + '-wal', name + '-shm', name + '-journal');
+    if (options.cache) add('cache2', 'startupCache', 'shader-cache');
+    if (options.cookies) database('cookies.sqlite');
+    if (options.passwords) {
+      // key4.db also holds keys for imported client certificates. Remove login
+      // records and their recovery copy without destroying unrelated keys.
+      add('logins.json', 'logins-backup.json');
+      database('signons.sqlite');
     }
+    if (options.localStorage) {
+      database('webappsstore.sqlite');
+      database(path.join('storage', 'ls-archive.sqlite'));
+    }
+    if (options.places) {
+      database('places.sqlite'); database('favicons.sqlite'); database('formhistory.sqlite');
+      add('bookmarkbackups', 'sessionstore.jsonlz4', 'sessionstore-backups');
+    }
+    // Firefox quota storage shares an origin directory across independent APIs.
+    // Delete only the selected client, retaining the other APIs and metadata.
+    const clients = [options.cache && 'cache', options.localStorage && 'ls', options.indexedDB && 'idb'].filter(Boolean);
+    if (clients.length) {
+      for (const repository of ['default', 'temporary', 'permanent']) {
+        const directory = await assertSafeProfileChild(root, path.join(base, 'storage', repository));
+        let origins;
+        try { origins = await fsp.readdir(directory, { withFileTypes: true }); }
+        catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+        for (const origin of origins) {
+          if (!origin.isDirectory() && !origin.isSymbolicLink()) continue;
+          for (const client of clients) targets.push(path.join(directory, origin.name, client));
+        }
+      }
+    }
+    for (const target of targets) await assertSafeProfileChild(root, target);
+    return targets;
   }
 
   /** Clear cache + cookies on disk for a stopped profile. */
   async clearProfileCacheAndCookies(profileId) {
     const id = assertProfileId(profileId);
-    if (this.running.has(id)) throw new Error('请先关闭窗口再清除缓存及 Cookie');
+    if (this.running.has(id) || this.starting.has(id)) throw new Error('请先关闭窗口再清除缓存及 Cookie');
     const root = this.profileRoot(id);
-    await this.clearProfileCache(root);
+    const check = await validateProfileRootSecure(this.profileDataRootPath, root, id);
+    if (!check.ok) throw new Error('Isolation error: ' + check.message);
     const base = path.join(root, 'Default');
-    for (const name of [
+    const targets = [
       path.join('Network', 'Cookies'),
       path.join('Network', 'Cookies-journal'),
       'Cookies',
       'Cookies-journal',
-    ]) {
-      const target = await assertSafeProfileChild(root, path.join(base, name));
-      await fsp.rm(target, { recursive: true, force: true }).catch(() => {});
-    }
+    ].map((name) => path.join(base, name));
+    targets.push(...await this.firefoxDataTargets(root, { cookies: true }));
+    for (const target of targets) await assertSafeProfileChild(root, target);
+    await clearFirefoxSessionCookies(root);
+    await this.clearProfileCache(root);
+    for (const target of targets) await fsp.rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
     const profile = this.profiles.get(id);
     if (profile) {
       profile.cookies = '';
       profile.updatedAt = new Date().toISOString();
       this.profiles.set(id, profile);
-      await this.persist().catch(() => {});
+      await this.persist();
     }
     return { success: true, id };
   }
 
   async enforceDataRetention(root, profile) {
+    if (profile.kernel === 'firefox-reverse') {
+      const advanced = profile.advanced;
+      if (advanced.saveHistory !== advanced.saveBookmarks) {
+        throw new Error('Firefox-Reverse 的历史和书签共用数据库，当前须同时保留或同时关闭这两项；请调整环境的数据保留设置');
+      }
+      const targets = await this.firefoxDataTargets(root, {
+        cookies: !advanced.saveCookies, passwords: !advanced.savePasswords,
+        localStorage: !advanced.saveLocalStorage, indexedDB: !advanced.saveIndexedDB,
+        places: !advanced.saveHistory && !advanced.saveBookmarks,
+      });
+      if (!advanced.saveCookies) await clearFirefoxSessionCookies(root);
+      for (const target of targets) await fsp.rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
+      return;
+    }
     const base = path.join(root, 'Default'); const targets = [];
     const add = (...names) => targets.push(...names.map((name) => path.join(base, name)));
     if (!profile.advanced.saveCookies) add(path.join('Network', 'Cookies'), path.join('Network', 'Cookies-journal'), 'Cookies', 'Cookies-journal');
@@ -830,11 +918,15 @@ class BrowserEngine {
     if (!profile.advanced.saveLocalStorage) add('Local Storage');
     if (!profile.advanced.saveIndexedDB) add('IndexedDB');
     if (!profile.advanced.saveHistory) add('History', 'History-journal', 'Visited Links', 'Top Sites', 'Top Sites-journal');
+    for (const target of targets) await assertSafeProfileChild(root, target);
     for (const target of targets) await fsp.rm(target, { recursive: true, force: true }).catch(() => {});
   }
 
   async applyProfilePreferences(root, profile) {
-    const defaultRoot = path.join(root, 'Default'); const file = path.join(defaultRoot, 'Preferences'); await fsp.mkdir(defaultRoot, { recursive: true });
+    const nativeFingerprint = isNativeFingerprintProfile(profile);
+    const defaultRoot = path.join(root, 'Default');
+    const file = await assertSafeProfileChild(root, path.join(defaultRoot, 'Preferences'));
+    await fsp.mkdir(defaultRoot, { recursive: true });
     let prefs = {}; try { prefs = JSON.parse(await fsp.readFile(file, 'utf8')); } catch (_) {}
     prefs.profile ||= {}; prefs.profile.default_content_setting_values ||= {};
     prefs.profile.exit_type = 'Normal'; prefs.profile.exited_cleanly = true;
@@ -844,9 +936,9 @@ class BrowserEngine {
     if (profile.advanced.blockNotifications) content.notifications = 2; else delete content.notifications;
     // 「完全禁用弹窗拦截」= 允许弹窗 (ALLOW=1)，不是屏蔽弹窗 (BLOCK=2)
     if (profile.advanced.blockPopups) content.popups = 1; else delete content.popups;
-    if (profile.privacy.media === 'blocked') { content.media_stream_mic = 2; content.media_stream_camera = 2; } else { delete content.media_stream_mic; delete content.media_stream_camera; }
-    if (profile.privacy.geoMode === 'disabled') content.geolocation = 2;
-    else if (profile.privacy.geoMode === 'prompt') content.geolocation = 3;
+    if (!nativeFingerprint && profile.privacy.media === 'blocked') { content.media_stream_mic = 2; content.media_stream_camera = 2; } else { delete content.media_stream_mic; delete content.media_stream_camera; }
+    if (!nativeFingerprint && profile.privacy.geoMode === 'disabled') content.geolocation = 2;
+    else if (!nativeFingerprint && profile.privacy.geoMode === 'prompt') content.geolocation = 3;
     else delete content.geolocation;
     const allowPasswords = Boolean(profile.advanced.savePasswords) && !profile.advanced.blockPasswordPrompt;
     prefs.credentials_enable_service = allowPasswords;
@@ -854,14 +946,19 @@ class BrowserEngine {
     prefs.signin ||= {}; prefs.signin.allowed = Boolean(profile.advanced.allowSignin);
     prefs.intl ||= {};
     // e.g. ja-JP,ja  so Accept-Language matches IP-derived locale
-    {
+    if (nativeFingerprint) {
+      // Remove overrides left by a prior custom launch; Chromium then resolves
+      // its own locale instead of retaining the previously generated identity.
+      delete prefs.intl.accept_languages;
+      delete prefs.intl.selected_languages;
+    } else {
       const lang = String(profile.language || 'en-US').trim();
       const primary = lang.split(',')[0].trim();
       const base = primary.split('-')[0];
       prefs.intl.accept_languages = base && base !== primary ? `${primary},${base}` : primary;
     }
     prefs.webkit ||= {}; prefs.webkit.webprefs ||= {};
-    if (profile.privacy.fontMode === 'custom') prefs.webkit.webprefs.default_font_size = profile.privacy.fontSize;
+    if (!nativeFingerprint && profile.privacy.fontMode === 'custom') prefs.webkit.webprefs.default_font_size = profile.privacy.fontSize;
     else delete prefs.webkit.webprefs.default_font_size;
     prefs.bookmark_bar ||= {};
     prefs.bookmark_bar.show_on_all_tabs = Boolean(profile.advanced.showBookmarkBar);
@@ -923,6 +1020,7 @@ class BrowserEngine {
   }
 
   async applyRuntimeSettings(port, profile, fingerprint = null, options = {}) {
+    const nativeFingerprint = isNativeFingerprintProfile(profile);
     const phase = String(options.phase || 'applyRuntimeSettings');
     const tabs = await cdp.tabs(port);
     const network = this.networkInfo.get(profile.id) || {};
@@ -933,7 +1031,7 @@ class BrowserEngine {
       exitLatitude: profile.exitLatitude ?? network.latitude,
       exitLongitude: profile.exitLongitude ?? network.longitude,
     };
-    const fp = fingerprint || buildFingerprint(enriched);
+    const fp = nativeFingerprint ? buildFingerprint(enriched) : (fingerprint || buildFingerprint(enriched));
     // Track which CDP page targets already received inject (new tabs must not skip FP)
     const applied = options.appliedTargetIds instanceof Set ? options.appliedTargetIds : new Set();
     const blocked = [];
@@ -988,7 +1086,11 @@ class BrowserEngine {
         await fpLog('inject.skip-tab', { phase, profileId: profile.id, tabId: tab.id, url: tab.url, reason: 'already-applied' });
         continue;
       }
-      try {
+      if (nativeFingerprint) {
+        // Native mode still applies the explicit URL/port protections below,
+        // but never registers fingerprint scripts or probes/retries overrides.
+        applied.add(tab.id);
+      } else try {
         await applyFingerprintToTab(cdp.call, tab.webSocketDebuggerUrl, fp, enriched);
         let live = null;
         try {
@@ -1055,11 +1157,20 @@ class BrowserEngine {
               tabId: tab.id,
               error: String(retryError.message || retryError),
             });
+            if (retryError.documentStartOk === false) throw retryError;
           }
         } else {
           applied.add(tab.id);
         }
       } catch (error) {
+        if (error.documentStartOk === false) {
+          // A future navigation would run without the registered fingerprint.
+          // Close this specific managed tab before propagating the failure.
+          try { await cdp.closeTab(port, tab.id); }
+          catch (_) {
+            if (options.trackOn) await this.abortFingerprintProtection(options.trackOn, error);
+          }
+        }
         await fpLog('inject.tab-fail', {
           phase,
           profileId: profile.id,
@@ -1069,7 +1180,7 @@ class BrowserEngine {
         });
         // Soft-fail per tab: keep trying other tabs / later phases instead of aborting start.
         const msg = String(error.message || error || '');
-        if (!/Uncaught|already in effect|cannot be overridden|softInject/i.test(msg)) {
+        if (error.documentStartOk === false || !/Uncaught|already in effect|cannot be overridden|softInject/i.test(msg)) {
           throw error;
         }
       }
@@ -1098,6 +1209,7 @@ class BrowserEngine {
 
   async applyFingerprintToSession(connection, sessionId, item, fingerprint, targetInfo = {}) {
     const profile = item?.profile || {};
+    if (isNativeFingerprintProfile(profile)) return buildFingerprint(profile);
     const network = this.networkInfo.get(profile.id) || {};
     const enriched = {
       ...profile,
@@ -1118,7 +1230,35 @@ class BrowserEngine {
     return injectFp;
   }
 
+  async abortFingerprintProtection(item, error) {
+    if (item.fingerprintAbortPromise) return item.fingerprintAbortPromise;
+    item.cdpError = error.message;
+    item.fingerprintStartupError = error;
+    item.stopping = true;
+    this.clearRunningWatch(item);
+    item.fingerprintAbortPromise = (async () => {
+      const connection = item.cdpConnection || item.workerFingerprintConnection;
+      // The port adapter takes a numeric timeout; flattened worker CDP takes
+      // an options object. Keep the close attempt bounded for either adapter.
+      const closeTimeout = item.cdpConnection ? 1500 : { timeout: 1500 };
+      try { await connection?.command('Browser.close', {}, closeTimeout); } catch (_) {}
+      let stopped = item.child?.exitCode != null || item.child?.signalCode != null;
+      if (!stopped && item.pid) {
+        // Identity verification includes the executable and this environment's
+        // user-data-dir. Never terminate another environment or a global name.
+        stopped = await killProcessTree(item.pid, managedBrowserKillOptions(item, item.root)).catch(() => false);
+      }
+      if (stopped) item.fingerprintFailureCleanup?.();
+      // If termination cannot be confirmed, retain the profile lock and paused
+      // debugger connection. In either case this start must not report ready.
+      this.emit({ type: 'status', id: item.profile?.id, running: !stopped, error: error.message, reason: 'fingerprint-injection-failed' });
+      return stopped;
+    })();
+    return item.fingerprintAbortPromise;
+  }
+
   async startWorkerFingerprintInjection(item, fingerprint) {
+    if (isNativeFingerprintProfile(item?.profile)) return;
     const source = buildWorkerInjectionScript(fingerprint);
     const browserWs = await cdp.browserSocket(item.port);
     const workerTypes = new Set(['worker', 'shared_worker', 'service_worker']);
@@ -1137,6 +1277,7 @@ class BrowserEngine {
       const { sessionId, targetInfo = {}, waitingForDebugger } = event.params || {};
       if (!sessionId) return;
       (async () => {
+        let safeToResume = true;
         try {
           if (targetInfo.type === 'page' || targetInfo.type === 'iframe') {
             // Nested attach so workers/iframes under this page also pause for inject.
@@ -1152,6 +1293,17 @@ class BrowserEngine {
             await connection.command('Runtime.evaluate', { expression: source }, { sessionId, timeout: 10000 });
           }
         } catch (error) {
+          if (error.documentStartOk === false) {
+            safeToResume = false;
+            if (item.fingerprintStartupComplete !== true) item.fingerprintStartupError = error;
+            try {
+              if (!targetInfo.targetId) throw new Error('Missing failed target id');
+              const closed = await connection.command('Target.closeTarget', { targetId: targetInfo.targetId });
+              if (closed?.success !== true) throw new Error('Failed target did not close');
+            } catch (_) {
+              await this.abortFingerprintProtection(item, error);
+            }
+          }
           report(error, targetInfo);
           this.emit({
             type: 'fingerprint-injection-failed',
@@ -1160,7 +1312,7 @@ class BrowserEngine {
             message: error.message,
           });
         } finally {
-          if (waitingForDebugger) {
+          if (waitingForDebugger && safeToResume) {
             await connection.command('Runtime.runIfWaitingForDebugger', {}, { sessionId })
               .catch((error) => report(error, targetInfo));
           }
@@ -1265,6 +1417,7 @@ class BrowserEngine {
   }
 
   needsExitNetworkForLocale(profile) {
+    if (isNativeFingerprintProfile(profile)) return false;
     const privacy = profile.privacy || {};
     const langMode = privacy.languageMode || (privacy.langFromIp !== false ? 'ip' : '');
     const tzMode = privacy.timezoneMode || 'ip';
@@ -1317,6 +1470,7 @@ class BrowserEngine {
   }
 
   applyResolvedLocale(profile) {
+    if (isNativeFingerprintProfile(profile)) return profile;
     const network = this.networkInfo.get(profile.id) || {
       countryCode: profile.exitCountryCode,
       timezone: profile.exitTimezone,
@@ -1404,6 +1558,7 @@ class BrowserEngine {
    * if still looks like the host machine. Writes diagnostics to fingerprint-inject.log.
    */
   async ensureStartPageFingerprint(item, profile, injectFp, startUrl) {
+    if (isNativeFingerprintProfile(profile)) return null;
     const port = item?.port;
     if (!port) return null;
     const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
@@ -1501,6 +1656,7 @@ class BrowserEngine {
       }
     } catch (error) {
       await fpLog('probe.reload-fail', { profileId: profile.id, error: String(error.message || error) });
+      if (error.documentStartOk === false) throw error;
     }
     return live;
   }
@@ -1549,7 +1705,8 @@ class BrowserEngine {
         return null;
       }
     })();
-    const uaFromFp = fpForStart?.userAgent || profile.userAgent || '';
+    const nativeFingerprint = isNativeFingerprintProfile(profile);
+    const uaFromFp = nativeFingerprint ? '' : (fpForStart?.userAgent || profile.userAgent || '');
     try {
       const server = await this.ensureStartPage();
       const url = server.registerSession({
@@ -1557,12 +1714,12 @@ class BrowserEngine {
         exitTimezone: timezone,
         exitIp: pageNetwork?.ip || profile.exitIp || '',
         exitCountryCode: pageNetwork?.countryCode || profile.exitCountryCode || '',
-        userAgent: profile.userAgent || uaFromFp,
+        userAgent: nativeFingerprint ? '' : (profile.userAgent || uaFromFp),
         group_name: profile.group_name || profile.groupName || '',
         privacy: {
           ...(profile.privacy || {}),
           // Prefer resolved fingerprint surfaces for welcome-page expected checks
-          fingerprint: {
+          fingerprint: nativeFingerprint ? {} : {
             ...(profile.privacy?.fingerprint || {}),
             hardwareConcurrency: fpForStart?.hardwareConcurrency ?? profile.privacy?.fingerprint?.hardwareConcurrency,
             deviceMemory: fpForStart?.deviceMemory ?? profile.privacy?.fingerprint?.deviceMemory,
@@ -1571,12 +1728,12 @@ class BrowserEngine {
       }, {
         timezone,
         network: pageNetwork,
-        userAgent: profile.userAgent || uaFromFp,
+        userAgent: nativeFingerprint ? '' : (profile.userAgent || uaFromFp),
         group_name: profile.group_name || profile.groupName || '',
         browserName,
         extensionCount,
         time: Math.floor(Date.now() / 1000),
-        expectedFingerprint: fpForStart ? {
+        expectedFingerprint: fpForStart && !nativeFingerprint ? {
           language: (fpForStart.languages && fpForStart.languages[0]) || profile.language || '',
           userAgent: fpForStart.userAgent || uaFromFp,
           platform: fpForStart.platform || '',
@@ -1631,7 +1788,7 @@ class BrowserEngine {
   }
 
   async markProfileCleanExit(root) {
-    const file = path.join(root, 'Default', 'Preferences');
+    const file = await assertSafeProfileChild(root, path.join(root, 'Default', 'Preferences'));
     try {
       const prefs = JSON.parse(await fsp.readFile(file, 'utf8')); prefs.profile ||= {};
       prefs.profile.exit_type = 'Normal'; prefs.profile.exited_cleanly = true;
@@ -1853,47 +2010,79 @@ class BrowserEngine {
    */
   async startExternalKernel(profile) {
     const externalKernel = require('./automation/external-kernel');
-    const proxyMeta = profile.proxyMeta || {};
-    const hasDynamicExtract = profile.networkMode === 'proxy'
-      && Boolean(String(proxyMeta.apiExtractUrl || '').trim());
-    const checksExitBeforeLaunch = Boolean(
-      proxyMeta.checkOnStart || proxyMeta.refreshOnStart || hasDynamicExtract
-    );
-    this.emitStartProgress(
-      profile.id,
-      checksExitBeforeLaunch ? 'proxy' : 'network',
-      18,
-      checksExitBeforeLaunch ? '正在检测代理与出口…' : '正在应用网络配置…',
-    );
-    profile = await this.prepareProfileProxyForStart(profile);
-    this.profiles.set(profile.id, profile);
-    await this.ensureExitNetworkForLocale(profile).catch(() => {});
-    profile = this.applyResolvedLocale(profile);
-    this.profiles.set(profile.id, profile);
-    this.emitStartProgress(profile.id, 'kernel', 30, '正在准备 Firefox-Reverse 内核…');
-    const found = externalKernel.detect({
-      configuredPath: this.externalKernelPath || '',
-      userDataPath: this.app?.getPath ? this.app.getPath('userData') : null,
-      appRoot: __dirname,
-    });
-    if (!found) {
-      throw new Error('未找到 Firefox-Reverse 内核。请在「本地设置」指定其安装目录，'
-        + '或将其放到 Browserapp/kernels/firefox-reverse/。');
-    }
-
     const root = this.profileRoot(profile.id);
-    const profileDir = path.join(root, 'firefox-profile');
-    await fsp.mkdir(profileDir, { recursive: true });
-
-    const targetProxyConfig = profile.networkMode === 'proxy' ? this.proxyConfig(profile.proxy) : null;
+    const rootCheck = await validateProfileRootSecure(this.profileDataRootPath, root, profile.id, { create: true });
+    if (!rootCheck.ok) throw new Error('Isolation error: ' + rootCheck.message);
+    const profileDir = await assertSafeProfileChild(root, path.join(root, 'firefox-profile'));
+    const profileLock = await acquireProfileLock(root, { profileId: profile.id, kernel: 'firefox-reverse' });
     let proxyForwarder = null;
-    let launched;
+    let launched = null;
+    let record = null;
+    let binary = null;
+    let cleanupPromise = null;
+    const browserAlive = () => launched && (launched.pid !== launched.launcherPid
+      ? isPidAlive(launched.pid)
+      : launched.child.exitCode === null && launched.child.signalCode == null);
+    const cleanup = () => {
+      if (!cleanupPromise) cleanupPromise = (async () => {
+        if (record) this.clearRunningWatch(record);
+        await proxyForwarder?.close().catch(() => {});
+        try {
+          if (launched) await this.enforceDataRetention(root, this.profiles.get(profile.id) || profile);
+        } catch (error) {
+          this.emit({ type: 'sync-error', action: 'data-retention', id: profile.id, message: error.message });
+          throw error;
+        } finally {
+          await releaseProfileLock(root, profileLock).catch(() => {});
+          if (!record || this.running.get(profile.id) === record) this.running.delete(profile.id);
+        }
+      })();
+      return cleanupPromise;
+    };
     try {
+      await this.enforceDataRetention(root, profile);
+      if (profile.advanced.clearCacheOnStart) await this.clearProfileCache(root);
+      const proxyMeta = profile.proxyMeta || {};
+      const hasDynamicExtract = profile.networkMode === 'proxy'
+        && Boolean(String(proxyMeta.apiExtractUrl || '').trim());
+      const checksExitBeforeLaunch = Boolean(
+        proxyMeta.checkOnStart || proxyMeta.refreshOnStart || hasDynamicExtract
+      );
+      this.emitStartProgress(
+        profile.id,
+        checksExitBeforeLaunch ? 'proxy' : 'network',
+        18,
+        checksExitBeforeLaunch ? '正在检测代理与出口…' : '正在应用网络配置…',
+      );
+      profile = await this.prepareProfileProxyForStart(profile);
+      this.profiles.set(profile.id, profile);
+      await this.ensureExitNetworkForLocale(profile).catch(() => {});
+      profile = this.applyResolvedLocale(profile);
+      this.profiles.set(profile.id, profile);
+      this.emitStartProgress(profile.id, 'kernel', 30, '正在准备 Firefox-Reverse 内核…');
+      const found = externalKernel.detect({
+        configuredPath: this.externalKernelPath || '',
+        userDataPath: this.app?.getPath ? this.app.getPath('userData') : null,
+        appRoot: __dirname,
+      });
+      if (!found) {
+        throw new Error('未找到 Firefox-Reverse 内核。请在「本地设置」指定其安装目录，'
+          + '或将其放到 Browserapp/kernels/firefox-reverse/。');
+      }
+      binary = found.binary;
+      await fsp.mkdir(profileDir, { recursive: true });
+      await assertSafeProfileChild(root, path.join(profileDir, 'user.js'));
+
+      const targetProxyConfig = profile.networkMode === 'proxy' ? this.proxyConfig(profile.proxy) : null;
       proxyForwarder = await this.startProfileProxyForwarder(
         profile,
         targetProxyConfig,
         (value) => this.emit({ type: 'proxy-error', id: profile.id, code: value.code, message: value.message }),
       );
+      if (targetProxyConfig?.protocol === 'https' && !proxyForwarder) {
+        proxyForwarder = await startAuthenticatedProxy(targetProxyConfig,
+          (value) => this.emit({ type: 'proxy-error', id: profile.id, code: value.code, message: value.message }));
+      }
       this.emitStartProgress(profile.id, 'spawn', 62, '正在启动 Firefox-Reverse…');
       launched = await externalKernel.launch({
         binary: found.binary,
@@ -1901,64 +2090,106 @@ class BrowserEngine {
         url: this.startPageUrl ? this.startPageUrl(profile) : undefined,
         proxy: profile.networkMode === 'direct' ? '' : (proxyForwarder?.url || profile.proxy),
         networkMode: profile.networkMode,
-        env: localizedBrowserEnvironment(this.app.getPath('userData')),
+        env: await localizedBrowserEnvironment(root),
       });
+      launched.launcherPid ||= launched.child.pid || launched.pid;
+
+      // Drain the pipes: an unread stdout/stderr buffer eventually blocks the child.
+      launched.child.stdout?.on('data', () => {});
+      launched.child.stderr?.on('data', () => {});
+      let closed = false;
+      const reportClosed = () => {
+        if (closed || browserAlive()) return;
+        closed = true;
+        cleanup().catch(() => {});
+        // Mirror the Chromium teardown: the row watches `status`, and a stale
+        // start-progress would otherwise leave it spinning after the window closed.
+        this.emit({
+          type: 'profile-start-progress',
+          id: profile.id,
+          phase: 'stopped',
+          percent: 0,
+          message: '',
+          starting: false,
+          running: false,
+        });
+        this.emit({ type: 'status', id: profile.id, running: false });
+        this.emit({ type: 'profile-stopped', id: profile.id });
+      };
+      launched.child.once('exit', reportClosed);
+      launched.child.once('error', reportClosed);
+
+      record = {
+        id: profile.id,
+        child: launched.child,
+        pid: launched.pid,
+        launcherPid: launched.launcherPid || launched.pid,
+        // No CDP port on purpose — anything that needs one must check `kernel`.
+        port: null,
+        kernel: externalKernel.KERNEL_ID,
+        marionettePort: launched.marionettePort,
+        capabilities: externalKernel.capabilities(),
+        // Shaped like a Chromium record so shared status paths keep working.
+        browser: { name: 'Firefox-Reverse', path: found.binary },
+        root: profileDir,
+        profileRoot: root,
+        profileLock,
+        cleanup,
+        extensions: [],
+        loadedExtensions: [],
+        proxyForwarder,
+        startedAt: Date.now(),
+      };
+      this.emitStartProgress(profile.id, 'cdp', 80, '正在等待 Marionette 端口…');
+      const ready = await externalKernel.waitForMarionette(launched.marionettePort, 45000);
+      if (!ready || closed || !browserAlive()) throw new Error('Firefox-Reverse 启动失败：浏览器已退出或 Marionette 端口未就绪');
+      this.running.set(profile.id, record);
+      const watch = () => {
+        record.watchTimer = null;
+        if (this.running.get(profile.id) !== record) return;
+        if (!browserAlive()) { reportClosed(); return; }
+        record.watchTimer = setTimeout(watch, 1500);
+        record.watchTimer.unref?.();
+      };
+      record.watchTimer = setTimeout(watch, 1500);
+      record.watchTimer.unref?.();
+      this.emitStartProgress(profile.id, 'ready', 100, '已就绪');
+      // The row's spinner clears on this status event, not on profile-started —
+      // without it the environment sat at "即将就绪 100%" forever.
+      this.emit({ type: 'status', id: profile.id, running: true, ...this.publicRunning(profile.id) });
+      return this.publicRunning(profile.id);
     } catch (error) {
-      await proxyForwarder?.close().catch(() => {});
+      let stopped = !browserAlive();
+      if (browserAlive()) {
+        stopped = await killProcessTree(launched.pid, { force: true, expectedExecutable: binary, expectedProfileDir: profileDir }).catch(() => false);
+      }
+      if (!stopped && browserAlive() && record) {
+        // Keep ownership and a stoppable record if termination could not be
+        // confirmed. Releasing this lock would allow concurrent profile reuse.
+        record.cdpError = error.message;
+        this.running.set(profile.id, record);
+      } else {
+        await cleanup();
+      }
+      this.emit({ type: 'profile-start-progress', id: profile.id, phase: 'error', percent: 0,
+        message: error.message, starting: false, running: this.running.has(profile.id), error: true });
       throw error;
     }
-
-    // Drain the pipes: an unread stdout/stderr buffer eventually blocks the child.
-    launched.child.stdout?.on('data', () => {});
-    launched.child.stderr?.on('data', () => {});
-    launched.child.once('exit', () => {
-      proxyForwarder?.close().catch(() => {});
-      this.running.delete(profile.id);
-      // Mirror the Chromium teardown: the row watches `status`, and a stale
-      // start-progress would otherwise leave it spinning after the window closed.
-      this.emit({
-        type: 'profile-start-progress',
-        id: profile.id,
-        phase: 'stopped',
-        percent: 0,
-        message: '',
-        starting: false,
-        running: false,
-      });
-      this.emit({ type: 'status', id: profile.id, running: false });
-      this.emit({ type: 'profile-stopped', id: profile.id });
-    });
-
-    this.emitStartProgress(profile.id, 'cdp', 80, '正在等待 Marionette 端口…');
-    const ready = await externalKernel.waitForMarionette(launched.marionettePort, 45000);
-
-    const record = {
-      id: profile.id,
-      child: launched.child,
-      pid: launched.pid,
-      launcherPid: launched.launcherPid || launched.pid,
-      // No CDP port on purpose — anything that needs one must check `kernel`.
-      port: null,
-      kernel: externalKernel.KERNEL_ID,
-      marionettePort: launched.marionettePort,
-      capabilities: externalKernel.capabilities(),
-      // Shaped like a Chromium record so shared status paths keep working.
-      browser: { name: 'Firefox-Reverse', path: found.binary },
-      root: profileDir,
-      extensions: [],
-      loadedExtensions: [],
-      proxyForwarder,
-      startedAt: Date.now(),
-    };
-    this.running.set(profile.id, record);
-    this.emitStartProgress(profile.id, 'ready', 100, ready ? '已就绪' : '已启动（Marionette 未就绪）');
-    // The row's spinner clears on this status event, not on profile-started —
-    // without it the environment sat at "即将就绪 100%" forever.
-    this.emit({ type: 'status', id: profile.id, running: true, ...this.publicRunning(profile.id) });
-    return this.publicRunning(profile.id);
   }
 
   async start(raw) {
+    if (this.restoringBackup) throw new Error('请等待备份恢复完成后再启动环境');
+    if (this.changingProfileDataRoot) throw new Error('请等待环境数据目录更改完成后再启动环境');
+    const profile = this.sanitizeProfile(raw);
+    this.assertProfileIdentity(profile.id);
+    if (this.starting.has(profile.id)) return this.starting.get(profile.id);
+    if (this.running.has(profile.id)) return this.publicRunning(profile.id);
+    const pending = this.startProfile(profile).finally(() => this.starting.delete(profile.id));
+    this.starting.set(profile.id, pending);
+    return pending;
+  }
+
+  async startProfile(raw) {
     // let: language/timezone resolution reassigns profile via applyResolvedLocale
     let profile = this.sanitizeProfile(raw); this.profiles.set(profile.id, profile);
     if (this.running.has(profile.id)) {
@@ -2016,7 +2247,8 @@ class BrowserEngine {
     const startUrl = customStartUrls[0] || infoStartUrl;
     const proxyConfig = profile.networkMode === 'proxy' ? this.proxyConfig(profile.proxy) : null; let proxyForwarder = null;
     // Site-stability keeps static marks; refresh-on-start only when stability is off.
-    const allowSeedRefresh = profile.privacy.refreshFingerprintOnStart && profile.privacy.stabilityMode === 'off';
+    const nativeFingerprint = isNativeFingerprintProfile(profile);
+    const allowSeedRefresh = !nativeFingerprint && profile.privacy.refreshFingerprintOnStart && profile.privacy.stabilityMode === 'off';
     const fingerprint = buildFingerprint({
       ...profile,
       fingerprintLaunchSeed: allowSeedRefresh ? crypto.randomBytes(16).toString('hex') : '',
@@ -2029,7 +2261,7 @@ class BrowserEngine {
       const meta = profile.proxyMeta || {};
       const major = Number(meta.tlsChromeMajor)
         || Number(fingerprint?.uaProfile?.chromeMajor)
-        || Number(String(profile.userAgent || fingerprint?.userAgent || '').match(/Chrome\/(\d+)/)?.[1])
+        || (nativeFingerprint ? Number(String(browser.version || '').split('.')[0]) : Number(String(profile.userAgent || fingerprint?.userAgent || '').match(/Chrome\/(\d+)/)?.[1]))
         || 0;
       proxyConfig.tlsProfile = {
         id: meta.tlsProfile || 'auto',
@@ -2065,6 +2297,9 @@ class BrowserEngine {
     for (const flag of chromeArgsForFingerprint(fingerprint, profile)) {
       if (!args.some((a) => a.split('=')[0] === flag.split('=')[0])) args.push(flag);
     }
+    if (nativeFingerprint && ['proxy', 'disabled'].includes(profile.privacy.webrtc)) {
+      args.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--webrtc-ip-handling-policy=disable_non_proxied_udp', '--enforce-webrtc-ip-permission-check');
+    }
     // aibrowser-148: write profile/init.json so Framework native FP matches buildFingerprint
     let runtimeFingerprint = fingerprint;
     let kernelWindowName = null;
@@ -2095,6 +2330,8 @@ class BrowserEngine {
           id: profile.id,
           message: '内核 init 指纹同步失败：' + error.message,
         });
+        // Never start native mode with a previous custom identity still on disk.
+        if (nativeFingerprint) throw error;
       }
     }
     if (!profile.advanced.allowSignin) args.push('--disable-sync');
@@ -2105,7 +2342,7 @@ class BrowserEngine {
     const disabledFeatures = [];
     // Must join the merged list below — a second --disable-features switch would
     // shadow the first, silently dropping the TLS and proxy-privacy features.
-    if (profile.privacy.webgpu === 'blocked') disabledFeatures.push('WebGPU');
+    if (!nativeFingerprint && profile.privacy.webgpu === 'blocked') disabledFeatures.push('WebGPU');
     // Authenticated proxies must be exposed to Chrome through the local bridge.
     let proxy = profile.networkMode === 'proxy'
       ? (proxyForwarder ? proxyForwarder.url : this.proxyArg(profile.proxy))
@@ -2192,14 +2429,15 @@ class BrowserEngine {
     let port;
     try {
       this.emitStartProgress(profile.id, 'spawn', 62, '正在启动浏览器进程…');
-      await ensureKernelReadyForLaunch(browser, '', { userDataPath: this.app.getPath('userData') });
+      const browserEnvironment = await localizedBrowserEnvironment(root);
+      await ensureKernelReadyForLaunch(browser, '', { userDataPath: root });
       child = spawn(launchBinary, finalArgs, {
         detached: process.platform !== 'win32',
         // This is the user's interactive browser, so do not pass SW_HIDE on
         // Windows. It suppresses the initial Wayfern window as well as consoles.
         windowsHide: false,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: localizedBrowserEnvironment(this.app.getPath('userData')),
+        env: browserEnvironment,
       });
       const startupDiagnostic = { launchBinary, profileRoot: root, stdout: '', stderr: '' };
       child._startupDiagnostic = startupDiagnostic;
@@ -2283,7 +2521,7 @@ class BrowserEngine {
       loadedExtensions: reconciled.extensions,
       fingerprint,
       kernelWindowName: kernelWindowName || null,
-      nativeKernelFingerprint: isAiBrowser148(browser),
+      nativeKernelFingerprint: !nativeFingerprint && isAiBrowser148(browser),
     };
     const cleanup = (exitedNormally = false) => {
       if (item.cleanedUp) return;
@@ -2325,6 +2563,7 @@ class BrowserEngine {
     });
     child.once('error', (error) => { cleanup(false); this.emit({ type: 'status', id: profile.id, running: false, error: error.message }); });
     item.startupExtensionGuard = this.suppressStartupExtensionPages(connection, reconciled.installed).catch((error) => this.emit({ type: 'sync-error', action: 'startup-extension-pages', id: profile.id, message: error.message }));
+    item.fingerprintFailureCleanup = cleanup;
     try {
       item.startUrl = startUrl;
       item.fpAppliedTargets = new Set();
@@ -2344,8 +2583,9 @@ class BrowserEngine {
         injectFp: summarizeFp(injectFp),
         logFile: fingerprintLogPath(),
       });
-      this.emitStartProgress(profile.id, 'inject', 88, '正在注入指纹与运行时…');
-      // Pre-inject is best-effort: must NEVER block start-page navigation.
+      this.emitStartProgress(profile.id, 'inject', 88, fingerprint?.native ? '正在应用浏览器原生环境与运行设置…' : '正在注入指纹与运行时…');
+      // Soft overrides may retry after navigation; a missing document-start
+      // registration must prevent unprotected navigation and abort this start.
       try {
         item.fingerprint = await this.applyRuntimeSettings(item.port, profile, injectFp, {
           appliedTargetIds: item.fpAppliedTargets,
@@ -2353,6 +2593,7 @@ class BrowserEngine {
           phase: 'pre-startpage',
         }) || fingerprint;
       } catch (preInjectError) {
+        if (preInjectError.documentStartOk === false) throw preInjectError;
         item.fingerprint = fingerprint;
         await fpLog('start.pre-inject-fail', {
           profileId: profile.id,
@@ -2379,11 +2620,13 @@ class BrowserEngine {
         };
       }
       await this.startWorkerFingerprintInjection(item, injectFp).catch(async (error) => {
+        if (error.documentStartOk === false) throw error;
         item.workerFingerprintError = error.message;
         await fpLog('worker.inject-fail', { profileId: profile.id, error: String(error.message || error) });
         this.emit({ type: 'worker-fingerprint-injection-failed', id: profile.id, message: error.message });
       });
-      // Always open the welcome/start page (even if inject failed).
+      if (item.fingerprintStartupError) throw item.fingerprintStartupError;
+      // Open the start page after successful document-start registration.
       if (!restoreSession && startUrl) {
         await fpLog('start.navigate-startpage', { profileId: profile.id, startUrl });
         try {
@@ -2394,6 +2637,7 @@ class BrowserEngine {
         try {
           await this.ensureStartPageFingerprint(item, profile, injectFp, startUrl);
         } catch (reInjectError) {
+          if (reInjectError.documentStartOk === false) throw reInjectError;
           await fpLog('start.reinject-fail', { profileId: profile.id, error: String(reInjectError.message || reInjectError) });
           this.emit({
             type: 'fingerprint-injection-failed',
@@ -2412,6 +2656,11 @@ class BrowserEngine {
     } catch (error) {
       item.cdpError = error.message;
       await fpLog('start.fail', { profileId: profile.id, error: String(error.message || error) });
+      const protectionError = error.documentStartOk === false ? error : item.fingerprintStartupError;
+      if (protectionError) {
+        await this.abortFingerprintProtection(item, protectionError);
+        throw protectionError;
+      }
       // Last chance: still try to open start page so UI is not stuck on about:blank.
       if (!restoreSession && startUrl && item.port) {
         try {
@@ -2420,11 +2669,16 @@ class BrowserEngine {
         } catch (_) {}
       }
     }
+    if (item.fingerprintStartupError) {
+      await this.abortFingerprintProtection(item, item.fingerprintStartupError);
+      throw item.fingerprintStartupError;
+    }
     if (!this.running.has(profile.id)) {
       throw new Error(item.cdpError || '浏览器在启动过程中异常退出');
     }
     // Detect user closing browser with X (process may stay alive; CDP/pages are source of truth)
     this.startRunningWatch(item);
+    item.fingerprintStartupComplete = true;
     this.emitStartProgress(profile.id, 'ready', 100, '启动完成');
     this.emit({ type: 'status', id: profile.id, running: true, ...this.publicRunning(profile.id) });
     return this.publicRunning(profile.id);
@@ -2462,6 +2716,7 @@ class BrowserEngine {
       loadedExtensions: item.loadedExtensions || [],
       cdpError: item.cdpError || null,
       fingerprint: item.fingerprint ? {
+        mode: isNativeFingerprintProfile(item.profile) ? 'native' : 'custom',
         platform: item.fingerprint.platform,
         hardwareConcurrency: item.fingerprint.hardwareConcurrency,
         deviceMemory: item.fingerprint.deviceMemory,
@@ -2473,27 +2728,39 @@ class BrowserEngine {
   }
 
   async stop(id) {
-    const safe = assertProfileId(id); const item = this.running.get(safe);
+    const safe = this.assertProfileIdentity(id);
+    if (this.starting.has(safe)) await this.starting.get(safe).catch(() => {});
+    const item = this.running.get(safe);
     if (!item) return { id: safe, running: false, alreadyStopped: true };
 
-    // External kernels have no CDP connection, proxy forwarder or profile lock,
-    // so the Chromium teardown below has nothing to do for them. Terminate the
-    // process directly instead of walking that path on swallowed errors.
+    // External kernels have their own profile argument and no CDP connection.
     if (item.kernel && item.kernel !== 'chromium') {
       item.stopping = true;
-      try {
-        if (item.child?.exitCode === null) {
-          if (process.platform === 'win32') {
-            const { execFile } = require('child_process');
-            await new Promise((resolve) => execFile('taskkill', ['/pid', String(item.pid), '/T', '/F'], () => resolve()));
-          } else {
-            process.kill(item.pid);
-          }
+      const alive = item.pid !== (item.launcherPid || item.child?.pid)
+        ? isPidAlive(item.pid)
+        : item.child?.exitCode === null && item.child?.signalCode == null;
+      if (alive) {
+        const stopped = await killProcessTree(item.pid, {
+          force: true, expectedExecutable: item.browser?.path, expectedProfileDir: item.root,
+        });
+        if (!stopped && isPidAlive(item.pid)) {
+          item.stopping = false;
+          throw new Error('无法确认 Firefox-Reverse 已关闭，环境数据锁已保留');
         }
-      } catch (_) { /* already gone */ }
+      }
+      this.clearRunningWatch(item);
       await item.proxyForwarder?.close().catch(() => {});
-      this.running.delete(safe);
+      let retentionError = null;
+      try {
+        if (item.cleanup) await item.cleanup();
+        else if (this.profiles.has(safe)) await this.enforceDataRetention(item.profileRoot || path.dirname(item.root), this.profiles.get(safe));
+      } catch (error) { retentionError = error; }
+      finally {
+        await releaseProfileLock(item.profileRoot || item.root, item.profileLock);
+        this.running.delete(safe);
+      }
       this.emit({ type: 'status', id: safe, running: false });
+      if (retentionError) throw retentionError;
       return { id: safe, running: false };
     }
 
@@ -2561,22 +2828,22 @@ class BrowserEngine {
     return { id: safe, running: false, graceful, cookieExported: Boolean(cookieExport) };
   }
 
-  async stopAll() { await Promise.all([...this.running.keys()].map((id) => this.stop(id))); }
+  async stopAll() { await Promise.all([...new Set([...this.running.keys(), ...this.starting.keys()])].map((id) => this.stop(id))); }
 
   async deleteProfiles(ids, deleteData = true) {
     if (!Array.isArray(ids) || ids.length > 200) throw new Error('Invalid profile selection');
-    const safeIds = [...new Set(ids.map(assertProfileId))];
+    const safeIds = [...new Set(ids.map((id) => this.assertProfileIdentity(id)))];
     const deleted = []; let stopped = 0;
     for (const id of safeIds) {
       if (!this.profiles.has(id)) continue;
-      if (this.running.has(id)) { await this.stop(id); stopped += 1; }
-      this.profiles.delete(id); this.assignments.delete(id); this.networkInfo.delete(id); deleted.push(id);
+      if (this.running.has(id) || this.starting.has(id)) { await this.stop(id); stopped += 1; }
       if (deleteData) {
         const profileRoot = this.profileRoot(id);
         const rootCheck = await validateProfileRootSecure(this.profileDataRootPath, profileRoot, id);
         if (!rootCheck.ok) throw new Error('Isolation error: ' + rootCheck.message);
         if (fs.existsSync(profileRoot)) await fsp.rm(profileRoot, { recursive: true, force: true });
       }
+      this.profiles.delete(id); this.assignments.delete(id); this.networkInfo.delete(id); deleted.push(id);
     }
     await this.persist();
     this.emit({ type: 'profiles', action: 'delete', ids: deleted }); this.emit({ type: 'extensions' });
@@ -2632,6 +2899,14 @@ class BrowserEngine {
 
   fingerprintPatchFromNetwork(network = {}, profile = {}) {
     const privacy = { ...(profile.privacy || {}) };
+    if (isNativeFingerprintProfile(profile)) {
+      return {
+        exitIp: network.ip || '', exitCountryCode: network.countryCode || '',
+        exitTimezone: network.timezone || '', exitLatitude: network.latitude ?? null,
+        exitLongitude: network.longitude ?? null,
+        exitCheckedAt: network.checkedAt || new Date().toISOString(),
+      };
+    }
     const language = resolveProfileLanguage({
       ...profile,
       privacy: { ...privacy, languageMode: privacy.languageMode || 'ip' },

@@ -5,6 +5,8 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
+const vm = require('vm');
+const { createRequire } = require('module');
 
 const {
   CUSTOM_BROWSER_METHODS,
@@ -40,6 +42,7 @@ const {
   LOCAL_API_PORTS,
   toFileUrl,
   extractUserDataDir,
+  extractProfileDir,
   windowsExecutableMatches,
 } = require('./cross-platform');
 
@@ -247,6 +250,40 @@ async function main() {
     false
   );
   pass('Windows process identity parsing');
+  assert.strictEqual(extractProfileDir('firefox.exe -profile "C:\\AiBrowser Data\\firefox-profile" -no-remote'), 'C:\\AiBrowser Data\\firefox-profile');
+  assert.strictEqual(extractProfileDir("firefox --profile '/tmp/browser profile' -no-remote"), '/tmp/browser profile');
+  assert.strictEqual(extractProfileDir('firefox --profile=/tmp/browser-profile'), '/tmp/browser-profile');
+  assert.strictEqual(extractProfileDir('firefox -profile /tmp/one -profile /tmp/two'), '');
+  assert.strictEqual(extractProfileDir('firefox -profile-manager'), '');
+  // Exercise process inspection with canned output. Never inspect or terminate
+  // a real user's process as part of this regression test.
+  const identityFile = require.resolve('./cross-platform');
+  const identitySource = fs.readFileSync(identityFile, 'utf8');
+  const localRequire = createRequire(identityFile);
+  for (const testPlatform of ['win32', 'linux']) {
+    let command = testPlatform === 'win32'
+      ? '"C:\\Browser\\firefox.exe" -profile "C:\\Browser Data\\env-a" -no-remote'
+      : '/opt/browser/firefox -profile /tmp/env-a -no-remote';
+    const executable = testPlatform === 'win32' ? 'C:\\Browser\\firefox.exe' : '/opt/browser/firefox';
+    const expectedProfileDir = testPlatform === 'win32' ? 'c:\\browser data\\ENV-A' : '/tmp/env-a';
+    const context = {
+      process: { platform: testPlatform },
+      module: { exports: {} },
+      require: (id) => id === 'child_process' ? {
+        execFileSync: () => testPlatform === 'win32'
+          ? JSON.stringify({ ProcessId: 123, ExecutablePath: executable, CommandLine: command }) : command,
+        spawn: () => { throw new Error('This test must not terminate a process'); },
+      } : localRequire(id),
+    };
+    vm.runInNewContext(identitySource, context, { filename: identityFile });
+    const identity = context.module.exports.processIdentity;
+    assert.strictEqual(identity(123, { expectedExecutable: executable, expectedProfileDir }).ok, true);
+    assert.strictEqual(identity(123, { expectedExecutable: executable, expectedProfileDir: expectedProfileDir + '-other' }).ok, false);
+    command = executable + ' -no-remote';
+    assert.strictEqual(identity(123, { expectedExecutable: executable, expectedProfileDir }).ok, false);
+    assert.strictEqual(identity(-1, { expectedExecutable: executable, expectedProfileDir }).ok, false);
+  }
+  pass('Firefox process identity requires the matching isolated profile');
   pass('cross-platform caps Win=' + isWindows() + ' Mac=' + isMac());
 
   console.log('\nAll pixel-protocol selftests passed.');
