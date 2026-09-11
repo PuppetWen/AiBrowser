@@ -51,6 +51,7 @@ function refreshIcons() {
 function applyTheme(theme = {}) {
   document.documentElement.dataset.uiTheme = String(theme.themeId || 'pixel-workstation');
   document.documentElement.dataset.colorMode = String(theme.colorMode || 'dark');
+  document.documentElement.dataset.nativeGlass = ['acrylic', 'vibrancy'].includes(theme.nativeGlass) ? theme.nativeGlass : 'none';
 }
 
 async function setExpanded(expanded) {

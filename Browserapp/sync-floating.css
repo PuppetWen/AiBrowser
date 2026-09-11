@@ -166,3 +166,141 @@ button:disabled { opacity: .44; cursor: not-allowed; }
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: var(--border); background-clip: content-box; }
 html[data-ui-theme="pixel-workstation"] .floating-shell, html[data-ui-theme="nes-light"] .floating-shell, html[data-ui-theme="retro-desktop"] .floating-shell,
 html[data-ui-theme="pixel-workstation"] button, html[data-ui-theme="nes-light"] button, html[data-ui-theme="retro-desktop"] button { border-radius: 2px; }
+
+/* The detached toolbar uses the same clear, layered material in every theme. */
+:root {
+  --float-glass-radius: 14px;
+  --float-glass-canvas: color-mix(in srgb, var(--bg) 68%, transparent);
+  --float-glass-panel: color-mix(in srgb, var(--surface) 55%, transparent);
+  --float-glass-control: color-mix(in srgb, var(--surface-2) 52%, transparent);
+  --float-glass-line: color-mix(in srgb, var(--text) 20%, transparent);
+  --float-glass-glint: rgba(255, 255, 255, .21);
+  --float-glass-muted: color-mix(in srgb, var(--text) 82%, var(--surface));
+  --float-glass-action: var(--accent);
+  --float-glass-action-ink: #082821;
+  --float-glass-shadow: 0 12px 32px rgba(0, 0, 0, .23), inset 0 1px 0 var(--float-glass-glint);
+}
+html:is([data-ui-theme="nes-light"], [data-ui-theme="retro-desktop"], [data-ui-theme="paper-studio"], [data-ui-theme="element-admin"]):not([data-ui-theme="element-admin"][data-color-mode="dark"]) {
+  --float-glass-canvas: color-mix(in srgb, var(--bg) 66%, transparent);
+  --float-glass-panel: color-mix(in srgb, var(--surface) 59%, transparent);
+  --float-glass-control: color-mix(in srgb, var(--surface) 56%, transparent);
+  --float-glass-line: color-mix(in srgb, var(--text) 21%, transparent);
+  --float-glass-glint: rgba(255, 255, 255, .76);
+  --float-glass-action: color-mix(in srgb, var(--accent) 60%, #172b40);
+  --float-glass-action-ink: #fff;
+  --float-glass-shadow: 0 12px 32px rgba(45, 51, 68, .16), inset 0 1px 0 var(--float-glass-glint);
+}
+html[data-ui-theme] .floating-shell {
+  border-color: var(--float-glass-line);
+  border-radius: var(--float-glass-radius);
+  background:
+    radial-gradient(ellipse at 8% 0%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 67%),
+    linear-gradient(150deg, rgba(255, 255, 255, .09), transparent 54%),
+    var(--float-glass-canvas);
+  box-shadow: var(--float-glass-shadow);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+/* An opaque local canvas prevents dark/clear holes on unsupported desktops. */
+html:not([data-native-glass="acrylic"]):not([data-native-glass="vibrancy"]) .floating-shell {
+  background-color: var(--bg);
+}
+.floating-bar {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 30%, transparent), transparent);
+  border-bottom: 1px solid var(--float-glass-line);
+}
+.floating-drawer {
+  border-color: var(--float-glass-line);
+  border-radius: 10px;
+  background: var(--float-glass-panel);
+  box-shadow: inset 0 1px 0 var(--float-glass-glint);
+}
+.drawer-tabs, .selection-toolbar {
+  background: color-mix(in srgb, var(--surface-2) 30%, transparent);
+  border-color: var(--float-glass-line);
+}
+html[data-ui-theme] button,
+.drawer-panel textarea, .drawer-panel input[type="text"], #floating-tab-url,
+.floating-random-row input {
+  appearance: none;
+  border-color: var(--float-glass-line);
+  border-radius: 7px;
+  background: linear-gradient(165deg, rgba(255, 255, 255, .07), transparent 65%), var(--float-glass-control);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--float-glass-glint) 60%, transparent);
+}
+html[data-ui-theme] button:not(:disabled) { transition: background-color .16s ease, border-color .16s ease, box-shadow .16s ease; }
+html[data-ui-theme] button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--float-glass-line));
+  background-color: color-mix(in srgb, var(--accent) 20%, var(--surface));
+}
+html[data-ui-theme] button:focus-visible,
+.drawer-panel input:focus-visible, .drawer-panel textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+html[data-ui-theme] .icon-button.primary, .environment-number {
+  border-color: color-mix(in srgb, var(--float-glass-action) 70%, var(--float-glass-line));
+  background: linear-gradient(150deg, rgba(255, 255, 255, .06), transparent), var(--float-glass-action);
+  color: var(--float-glass-action-ink);
+}
+html[data-ui-theme] .icon-button.primary:hover:not(:disabled) { background-color: var(--float-glass-action); }
+html[data-ui-theme] .icon-button.stop {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 62%, #661c28);
+  color: #fff;
+}
+html[data-ui-theme] .icon-button.stop:hover:not(:disabled) { background-color: color-mix(in srgb, var(--danger) 62%, #661c28); }
+html[data-ui-theme] .drawer-tabs button.active {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, var(--float-glass-panel));
+  color: var(--text);
+}
+.sync-state, .drawer-tabs button, .selection-toolbar small, .selection-toolbar > span,
+.empty-state, .environment-copy small, .master-choice, .panel-note,
+.custom-layout-heading small, .custom-layout-hint, .floating-switch,
+.floating-specified-modes, .floating-specified-foot { color: var(--float-glass-muted); }
+input::placeholder, textarea::placeholder { color: var(--float-glass-muted); opacity: 1; }
+.floating-specified-group, .custom-layout-sheet-wrap {
+  border-color: var(--float-glass-line);
+  background: color-mix(in srgb, var(--surface-2) 38%, transparent);
+}
+.environment-row.selected { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+.custom-layout-picker, .has-tip::after {
+  border-color: var(--float-glass-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--float-glass-shadow);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+}
+.floating-message {
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface));
+  color: color-mix(in srgb, var(--danger) 58%, var(--text));
+}
+.floating-message.success {
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  color: color-mix(in srgb, var(--accent) 58%, var(--text));
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html[data-ui-theme] .floating-shell {
+    --float-glass-canvas: var(--bg);
+    --float-glass-panel: var(--surface);
+    --float-glass-control: var(--surface-2);
+  }
+  html[data-ui-theme] .floating-shell { background: var(--bg); }
+  .floating-bar, .floating-drawer, .custom-layout-picker, .has-tip::after { background: var(--surface); }
+  html[data-ui-theme] .floating-shell, .custom-layout-picker, .has-tip::after { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui-theme] button, .targets-button .chevron, .has-tip::after { transition: none; }
+  .status-dot.waiting { animation: none; }
+}
+@media (forced-colors: active) {
+  html[data-ui-theme] .floating-shell, .floating-bar, .floating-drawer,
+  .drawer-tabs, .selection-toolbar, .custom-layout-picker, .has-tip::after {
+    border-color: CanvasText; background: Canvas; color: CanvasText;
+    box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  html[data-ui-theme] button, .drawer-panel input, .drawer-panel textarea { border: 1px solid ButtonText; box-shadow: none; }
+}

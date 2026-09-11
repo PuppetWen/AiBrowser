@@ -1,11 +1,12 @@
 /* ==========================================================================
    AiBrowser — Refined UI layer
    --------------------------------------------------------------------------
-   Loads LAST, after every skin.
+   Loads after every skin, before the shared liquid-glass.css material layer.
 
    Design contract, chosen after resolving the real cascade in these sheets:
 
-     Skins own COLOR and TEXTURE.  Each theme hardcodes its own button fills,
+     Skins supply COLOR and TEXTURE. The final glass layer adapts their material.
+     Each theme hardcodes its own button fills,
      gradients and palettes with !important, and those choices are internally
      coordinated. This layer does not touch them — overriding one half of a
      palette while the other half stays hardcoded only creates disharmony.

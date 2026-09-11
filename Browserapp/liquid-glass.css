@@ -1,0 +1,608 @@
+/* Shared material, loaded after the skins and ui-refined.css.
+ * Inspired by ZenDesktop's low-tint acrylic: translucent fills, a clear edge,
+ * and readable ink. No system modifications, images, or continuous animation.
+ * Skins retain their fonts, geometry and accent. Only material is shared.
+ */
+@layer liquid-glass {
+html[data-ui-theme] {
+  --glass-tint-rgb: 248 252 255;
+  --glass-canvas-rgb: 223 233 244;
+  --glass-accent-rgb: 30 104 195;
+  --glass-light-rgb: 128 193 225;
+  --glass-text: #17293d;
+  --glass-muted: #46596d;
+  --glass-accent-text: #174f91;
+  --glass-primary: #205da5;
+  --glass-on-primary: #fff;
+  --glass-danger: #a52337;
+  --glass-success: #236348;
+  --glass-line: rgb(47 76 109 / .23);
+  --glass-edge: rgb(255 255 255 / .88);
+  --glass-shadow-color: 30 53 84;
+  --glass-panel-alpha: .43;
+  --glass-field-alpha: .30;
+  --glass-popup-alpha: .89;
+  --glass-native-alpha: .74;
+  --glass-canvas-alpha: 1;
+  --glass-glint: .47;
+  --glass-blur: blur(22px) saturate(145%);
+  --glass-popup-blur: blur(30px) saturate(150%);
+  --glass-radius: max(6px, var(--ui-radius, 12px));
+  --glass-control-radius: max(4px, var(--ui-radius-sm, 8px));
+  --glass-panel: rgb(var(--glass-tint-rgb) / var(--glass-panel-alpha));
+  --glass-field: rgb(var(--glass-tint-rgb) / var(--glass-field-alpha));
+  --glass-popup: rgb(var(--glass-tint-rgb) / var(--glass-popup-alpha));
+  --glass-highlight: linear-gradient(145deg, rgb(255 255 255 / var(--glass-glint)), rgb(255 255 255 / .02) 38%, transparent 62%, rgb(var(--glass-light-rgb) / .10));
+  --glass-shadow: inset 0 1px 0 var(--glass-edge), inset 0 -1px 0 rgb(255 255 255 / .06), 0 8px 26px rgb(var(--glass-shadow-color) / .09);
+  --glass-control-shadow: inset 0 1px 0 var(--glass-edge), inset 0 -1px 0 rgb(var(--glass-shadow-color) / .05), 0 2px 5px rgb(var(--glass-shadow-color) / .06);
+
+  /* Bridge variable-based components (including dynamically rendered panels). */
+  --ui-text: var(--glass-text) !important;
+  --theme-text: var(--glass-text) !important;
+  --ui-muted: var(--glass-muted) !important;
+  --theme-muted: var(--glass-muted) !important;
+  --muted: var(--glass-muted) !important;
+  --ui-surface: var(--glass-panel) !important;
+  --theme-surface: var(--glass-panel) !important;
+  --ui-surface-muted: var(--glass-field) !important;
+  --theme-surface-alt: var(--glass-field) !important;
+  --theme-input: var(--glass-field) !important;
+  --ui-border: var(--glass-line) !important;
+  --ui-border-strong: var(--glass-line) !important;
+  --border: var(--glass-line) !important;
+  --theme-table-line: var(--glass-line) !important;
+  --theme-soft: rgb(var(--glass-accent-rgb) / .10) !important;
+  --ui-accent-soft: rgb(var(--glass-accent-rgb) / .16) !important;
+  --theme-active: var(--ui-accent-soft) !important;
+  --theme-accent-strong: var(--glass-accent-text) !important;
+  --ui-shadow: var(--glass-shadow) !important;
+}
+
+html[data-ui-theme="nes-light"] {
+  --glass-tint-rgb: 255 245 222;
+  --glass-canvas-rgb: 226 214 184;
+  --glass-accent-rgb: 63 111 111;
+  --glass-light-rgb: 126 176 157;
+  --glass-text: #292e25;
+  --glass-muted: #525647;
+  --glass-accent-text: #2b5856;
+  --glass-primary: #365e60;
+  --glass-line: rgb(81 76 48 / .25);
+}
+
+html[data-ui-theme="retro-desktop"] {
+  --glass-tint-rgb: 246 251 255;
+  --glass-canvas-rgb: 213 225 237;
+  --glass-accent-rgb: 39 110 191;
+  --glass-glint: .60;
+  --glass-radius: 12px;
+  --glass-control-radius: 9px;
+}
+
+html[data-ui-theme="paper-studio"] {
+  --glass-tint-rgb: 255 250 237;
+  --glass-canvas-rgb: 236 226 205;
+  --glass-accent-rgb: 61 108 91;
+  --glass-light-rgb: 210 166 123;
+  --glass-text: #28372e;
+  --glass-muted: #535f51;
+  --glass-accent-text: #2e5949;
+  --glass-primary: #365d4e;
+  --glass-line: rgb(96 84 61 / .23);
+}
+
+html[data-ui-theme="pixel-workstation"],
+html[data-ui-theme="aurora-glass"],
+html[data-ui-theme="element-admin"][data-color-mode="dark"] {
+  --glass-tint-rgb: 25 44 48;
+  --glass-canvas-rgb: 15 27 32;
+  --glass-accent-rgb: 125 218 193;
+  --glass-light-rgb: 85 177 183;
+  --glass-text: #f0f8f5;
+  --glass-muted: #b9cdc8;
+  --glass-accent-text: #b0f1da;
+  --glass-primary: #376862;
+  --glass-danger: #ffb2be;
+  --glass-success: #a2edc5;
+  --glass-line: rgb(188 231 223 / .25);
+  --glass-edge: rgb(223 255 247 / .26);
+  --glass-shadow-color: 0 10 16;
+  --glass-panel-alpha: .49;
+  --glass-field-alpha: .30;
+  --glass-popup-alpha: .93;
+  --glass-native-alpha: .84;
+  --glass-glint: .085;
+}
+
+html[data-ui-theme="aurora-glass"] {
+  --glass-tint-rgb: 19 39 56;
+  --glass-canvas-rgb: 7 20 35;
+  --glass-accent-rgb: 88 230 217;
+  --glass-light-rgb: 132 131 246;
+  --glass-primary: #235d78;
+}
+
+html[data-ui-theme="element-admin"][data-color-mode="dark"] {
+  --glass-tint-rgb: 32 43 59;
+  --glass-canvas-rgb: 20 28 41;
+  --glass-accent-rgb: 132 197 255;
+  --glass-light-rgb: 138 169 210;
+  --glass-accent-text: #c0e1ff;
+  --glass-primary: #305d91;
+}
+
+/* A native material is exposed only after Electron confirms it is enabled.
+ * The opaque canvas is also the browser/old-OS fallback. Never blur the body:
+ * fixed-position menus, tooltips and scroll rails must stay viewport-relative.
+ */
+html[data-ui-theme][data-native-glass="acrylic"],
+html[data-ui-theme][data-native-glass="vibrancy"] {
+  --glass-canvas-alpha: var(--glass-native-alpha);
+}
+
+html[data-ui-theme] { background: transparent !important; }
+html[data-ui-theme] body {
+  color: var(--glass-text) !important;
+  background:
+    radial-gradient(ellipse at 6% 4%, rgb(var(--glass-accent-rgb) / .21), transparent 52%),
+    radial-gradient(ellipse at 96% 72%, rgb(var(--glass-light-rgb) / .19), transparent 55%),
+    linear-gradient(128deg, rgb(var(--glass-tint-rgb) / .12), transparent 45%),
+    rgb(var(--glass-canvas-rgb) / var(--glass-canvas-alpha)) !important;
+  background-attachment: fixed !important;
+  background-size: cover !important;
+}
+
+html[data-ui-theme] body::after { content: none !important; }
+html[data-ui-theme] body [hidden] { display: none !important; }
+html[data-ui-theme] body :is(.app-shell, .content, main, .view) {
+  background: transparent !important;
+  color: var(--glass-text);
+  --theme-muted: var(--glass-muted) !important;
+  --ui-muted: var(--glass-muted) !important;
+}
+
+/* Layered important material rules take precedence over legacy unlayered
+ * skins without escalating selector specificity. States below can then
+ * override the shared base predictably. Geometry stays in ui-refined.css. */
+html[data-ui-theme] body :is(
+  .sidebar, .content > header, .toolbar, .sync-toolbar, .rpa-toolbar,
+  .table-card, .extension-card, .settings-grid article, .editor-form,
+  .profile-summary, .advanced-card, .local-status-card, .console,
+  .rpa-section, .rpa-panel, .rpa-editor-pane, .rpa-table-wrap,
+  .rpa-store-card, .rpa-empty-card, .rpa-guide-page, .log-card, .retro-log-window,
+  .ai-layout, .ai-provider-card, .ai-settings-card, .app-update-page article,
+  .rpa-guide-article, .rpa-profile-list, .rpa-variable-section,
+  .ai-action-card, .ai-rpa-draft
+) {
+  color: var(--glass-text) !important;
+  background: var(--glass-highlight), var(--glass-panel) !important;
+  border-color: var(--glass-line) !important;
+  border-width: 1px !important;
+  border-radius: var(--glass-radius) !important;
+  box-shadow: var(--glass-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Restrict blur to a few large surfaces; avoid a compositor layer per table
+ * cell or nested card. In-place popovers in settings keep their usual stacking.
+ */
+html[data-ui-theme] body :is(.sidebar, .content > header, .toolbar, .sync-toolbar, .rpa-toolbar) {
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+}
+html[data-ui-theme] body :is(.table-card, .settings-grid article, .editor-form, .rpa-panel, .console, .ai-layout) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-ui-theme] body :is(.sidebar, .content > header) {
+  border-radius: 0 !important;
+}
+html[data-ui-theme] body .sidebar :is(.nav, .nav-label)::before {
+  content: none !important;
+}
+html[data-ui-theme] body .sidebar .nav > :is(svg, i) { color: inherit !important; }
+html[data-ui-theme] body :is(.toolbar, .sync-toolbar, .rpa-toolbar) {
+  padding: 10px 12px;
+  border: 1px solid var(--glass-line);
+}
+
+/* Transparent inner layers prevent a stack of opaque cards from masking glass. */
+html[data-ui-theme] body :is(
+  table, tbody, td, .console-panel, .editor-panel, .ai-chat-panel,
+  .ai-messages, .ai-empty-state, .log-empty, .sync-empty,
+  .storage-settings-head, .rpa-guide-section, .rpa-guide-page-head
+) { background: transparent !important; }
+
+html[data-ui-theme] body :is(tbody tr, .log-row):nth-child(even) {
+  background: rgb(var(--glass-tint-rgb) / .12) !important;
+}
+html[data-ui-theme] body .log-row {
+  color: var(--glass-text) !important;
+  border-color: var(--glass-line) !important;
+}
+html[data-ui-theme] body .log-row span:first-child,
+html[data-ui-theme] body .retro-log-title span { color: var(--glass-muted) !important; }
+html[data-ui-theme] body .log-row span:nth-child(2) { color: var(--glass-accent-text) !important; }
+html[data-ui-theme] body .log-row span:last-child { color: var(--glass-text) !important; }
+
+html[data-ui-theme] body :is(
+  th, .table-footer, .pagination, .console-head, .console-tabs,
+  .editor-tabs, .editor-actions, .profile-editor-head, .dialog-head,
+  .dialog-actions, .ai-session-panel, .ai-composer,
+  .retro-log-titlebar, .retro-log-columns, .rpa-editor-head,
+  .settings-grid h3, .rpa-h2, .rpa-guide-nav, .tabs,
+  .profile-selection-bar, .profile-pagination, .rpa-actions-top,
+  .ai-chat-toolbar, .ai-context-strip, .ai-session-storage, .log-runtime-note,
+  .ai-provider-presets, .ai-provider-fields
+) {
+  background: var(--glass-highlight), var(--glass-field) !important;
+  color: var(--glass-text) !important;
+  border-color: var(--glass-line) !important;
+  box-shadow: inset 0 1px 0 var(--glass-edge) !important;
+}
+
+/* Sticky columns need enough tint to hide text scrolling underneath them. */
+html[data-ui-theme] #view-profiles .table-card :is(th, td).col-actions {
+  background: var(--glass-popup) !important;
+  border-color: var(--glass-line) !important;
+}
+html[data-ui-theme] body tbody tr:hover {
+  background: rgb(var(--glass-accent-rgb) / .12) !important;
+}
+html[data-ui-theme] body tbody tr.selected-row {
+  background: rgb(var(--glass-accent-rgb) / .21) !important;
+}
+
+/* Path wells are deliberately as clear as input fields, including the code
+ * element inside them; leaving its original fill would hide the material. */
+html[data-ui-theme] body :is(
+  input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"])),
+  select, textarea, .search, .themed-select-button, .storage-path-box,
+  .themed-multiselect, .rpa-search, .ai-session-search,
+  .pet-motion-multiselect > summary, .rpa-code-line,
+  .ua-meta-preview, .themed-color-control
+) {
+  background: var(--glass-highlight), var(--glass-field) !important;
+  color: var(--glass-text) !important;
+  -webkit-text-fill-color: var(--glass-text);
+  caret-color: var(--glass-accent-text);
+  border: 1px solid var(--glass-line) !important;
+  border-radius: var(--glass-control-radius) !important;
+  box-shadow: var(--glass-control-shadow) !important;
+  text-shadow: none !important;
+  appearance: none;
+}
+html[data-ui-theme] body .storage-path-box {
+  position: relative;
+  padding: 12px 14px;
+}
+html[data-ui-theme] body .storage-path-box code {
+  background: transparent !important;
+  color: var(--glass-text) !important;
+  font-size: 12px !important;
+  line-height: 1.65 !important;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+html[data-ui-theme] body :is(.search, .rpa-search, .ai-session-search) input {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+html[data-ui-theme] body :is(input, textarea)::placeholder {
+  color: var(--glass-muted) !important;
+  -webkit-text-fill-color: var(--glass-muted);
+  opacity: 1;
+}
+html[data-ui-theme] body :is(input, textarea):disabled {
+  opacity: .65;
+  cursor: not-allowed;
+}
+html[data-ui-theme] body :is(input[type="checkbox"], input[type="radio"], input[type="range"]) {
+  accent-color: var(--glass-primary);
+}
+
+/* Keep platform select option popups readable where backdrop blur is absent. */
+html[data-ui-theme] body :is(option, optgroup) {
+  background: rgb(var(--glass-tint-rgb)) !important;
+  color: var(--glass-text) !important;
+}
+
+html[data-ui-theme] body :is(
+  .outline, .mini, .theme-trigger, .theme-option, .editor-back,
+  .action-grid button, .row-actions button, .rpa-icon-btn,
+  .rpa-subtabs button, .rpa-tabs-line button, .rpa-seg button,
+  .sync-command, .sync-tab, .console-tabs button, .editor-tabs button,
+  .theme-appearance-seg button, .dialog-head > button,
+  .profile-pagination button, .group-chip, .ai-context-strip button
+) {
+  background: var(--glass-highlight), var(--glass-field) !important;
+  color: var(--glass-text) !important;
+  border: 1px solid var(--glass-line) !important;
+  border-radius: var(--glass-control-radius) !important;
+  box-shadow: var(--glass-control-shadow) !important;
+  text-shadow: none !important;
+  appearance: none;
+}
+html[data-ui-theme] body :is(
+  .primary, .new-browser, .ai-gradient-button
+) {
+  background: linear-gradient(155deg, rgb(255 255 255 / .17), transparent 58%), var(--glass-primary) !important;
+  color: var(--glass-on-primary) !important;
+  border: 1px solid rgb(255 255 255 / .27) !important;
+  border-radius: var(--glass-control-radius) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .27), 0 4px 12px rgb(var(--glass-shadow-color) / .14) !important;
+  text-shadow: none !important;
+  appearance: none;
+}
+html[data-ui-theme] body :is(.danger, .danger-sync, .mini.danger) {
+  background: color-mix(in srgb, var(--glass-danger) 12%, var(--glass-panel)) !important;
+  color: var(--glass-danger) !important;
+  border-color: color-mix(in srgb, var(--glass-danger) 48%, transparent) !important;
+  box-shadow: var(--glass-control-shadow) !important;
+}
+
+html[data-ui-theme] body :is(.outline, .mini, .theme-trigger, .theme-option, .themed-select-button):hover:not(:disabled) {
+  border-color: rgb(var(--glass-accent-rgb) / .60) !important;
+  background: var(--glass-highlight), rgb(var(--glass-accent-rgb) / .13) !important;
+}
+html[data-ui-theme] body :is(.sidebar .nav.active, .theme-option.active, .themed-select-option.active,
+  .themed-select-option[aria-selected="true"], .rpa-subtabs button.active,
+  .rpa-tabs-line button.active, .console-tabs button.active, .editor-tabs button.active,
+  .theme-appearance-seg button.active, .sync-tab.active, .group-chip.active,
+  .rpa-seg button.active, .ai-context-strip button.active) {
+  background: var(--glass-highlight), rgb(var(--glass-accent-rgb) / .19) !important;
+  color: var(--glass-accent-text) !important;
+  border-color: rgb(var(--glass-accent-rgb) / .50) !important;
+  box-shadow: inset 0 1px 0 var(--glass-edge), inset 3px 0 0 rgb(var(--glass-accent-rgb) / .72) !important;
+}
+html[data-ui-theme] body .group-chip.active {
+  color: var(--glass-text) !important;
+}
+html[data-ui-theme] body .group-chip.active :is(span, b) {
+  color: var(--glass-text) !important;
+}
+html[data-ui-theme] body .segmented {
+  background: var(--glass-field) !important;
+  border: 1px solid var(--glass-line) !important;
+  border-radius: var(--glass-control-radius) !important;
+  box-shadow: inset 0 1px 0 var(--glass-edge) !important;
+}
+html[data-ui-theme] body .segmented label {
+  color: var(--glass-muted) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+html[data-ui-theme] body .segmented label:has(input:checked) {
+  color: var(--glass-text) !important;
+  background: var(--glass-highlight), rgb(var(--glass-accent-rgb) / .19) !important;
+  border-color: var(--glass-line) !important;
+  box-shadow: inset 0 1px 0 var(--glass-edge) !important;
+}
+html[data-ui-theme] body .sidebar .nav {
+  color: var(--glass-muted) !important;
+  text-shadow: none !important;
+}
+html[data-ui-theme] body .sidebar .nav:hover {
+  background: rgb(var(--glass-accent-rgb) / .10) !important;
+  color: var(--glass-text) !important;
+}
+
+/* Popup surfaces have stronger local tint so underlying text never competes.
+ * Dialogs must NOT themselves get a filter/transform: selects mounted inside
+ * the top layer use viewport coordinates. The negative decorative layer is
+ * isolated without establishing a containing block for fixed descendants.
+ */
+html[data-ui-theme] body :is(.theme-popover, .themed-select-menu, .pet-motion-checks, .themed-multiselect-list, .ui-tooltip) {
+  color: var(--glass-text) !important;
+  background: var(--glass-highlight), var(--glass-popup) !important;
+  border: 1px solid var(--glass-line) !important;
+  border-radius: var(--glass-radius) !important;
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 18px 54px rgb(var(--glass-shadow-color) / .24) !important;
+  backdrop-filter: var(--glass-popup-blur) !important;
+  -webkit-backdrop-filter: var(--glass-popup-blur) !important;
+}
+html[data-ui-theme] body dialog {
+  isolation: isolate;
+  color: var(--glass-text) !important;
+  background: transparent !important;
+  border: 1px solid var(--glass-line) !important;
+  border-radius: max(12px, var(--glass-radius)) !important;
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 24px 80px rgb(0 10 24 / .30) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  transform: none !important;
+}
+html[data-ui-theme] body dialog::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit !important;
+  background: var(--glass-highlight), var(--glass-popup);
+  backdrop-filter: var(--glass-popup-blur);
+  -webkit-backdrop-filter: var(--glass-popup-blur);
+  pointer-events: none;
+}
+html[data-ui-theme] body dialog::after { content: none !important; }
+html[data-ui-theme] body dialog::backdrop {
+  background: rgb(10 20 32 / .25) !important;
+  backdrop-filter: blur(5px) !important;
+  -webkit-backdrop-filter: blur(5px) !important;
+}
+html[data-ui-theme] body .themed-select-option {
+  color: var(--glass-text) !important;
+  background: transparent !important;
+}
+html[data-ui-theme] body .themed-select-option:hover {
+  background: rgb(var(--glass-accent-rgb) / .14) !important;
+}
+
+/* Replace hardcoded light/dark ink in older skins together with their fills.
+ * Status colors, badges, swatches, primary actions and syntax colors remain
+ * semantic; only normal prose/headings and neutral field labels use this ink.
+ */
+html[data-ui-theme] body :is(
+  h1, h2, h3, h4, .brand strong, .profile-name strong,
+  td, label, dt, .dialog-head, .rpa-guide-section, .rpa-guide-section strong,
+  .rpa-guide-section li, .rpa-guide-nav a, .ai-message-content,
+  .theme-option strong, .themed-select-label, .env-identity strong,
+  .env-browser-label strong, .profile-total strong, .audit-row strong
+) {
+  color: var(--glass-text) !important;
+  text-shadow: none !important;
+}
+html[data-ui-theme] body :is(
+  p, .muted, .brand small, .nav-label, .profile-name small, .profile-group,
+  .network-mode, .env-browser-pill, .pager, .pagination, .empty, .sync-empty,
+  .theme-option small, .theme-popover-head span, .storage-path-box small,
+  .rpa-desc, .rpa-field, .rpa-toolbar-right, .storage-settings-head p,
+  .env-identity small, .env-identity-text small, .env-browser-label small,
+  .group-note, .profile-total, .profile-pagination span, .audit-row small,
+  .status-compact, .status, .exit-compact, .tab-group span
+) {
+  color: var(--glass-muted) !important;
+  text-shadow: none !important;
+}
+html[data-ui-theme] body :is(.engine-badge, .help-box, .extension-note, .rpa-banner, .delay-row,
+  .rpa-code-inline, .ai-message.assistant, .ai-tool-card,
+  .network-mode-hint, .storage-warning, .delete-warning, .field-hint,
+  #profile-create-kernel-hint, #editor-native-fingerprint-hint) {
+  color: var(--glass-text) !important;
+  background: var(--glass-field) !important;
+  border-color: var(--glass-line) !important;
+}
+html[data-ui-theme] body :is(.storage-warning, .network-mode-hint, #profile-create-kernel-hint) {
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+}
+html[data-ui-theme] body code {
+  color: var(--glass-accent-text) !important;
+  background: var(--glass-field) !important;
+}
+html[data-ui-theme] body :is(.rpa-code-block, .rpa-log, .rpa-json-editor, .ai-message pre) {
+  --rpa-log-fg: #def1e9 !important;
+  --rpa-log-muted: #b4c9cd !important;
+  --rpa-log-line: rgb(210 240 245 / .16) !important;
+  background: rgb(10 20 29 / .88) !important;
+  color: #def1e9 !important;
+  border-color: var(--glass-line) !important;
+  text-shadow: none !important;
+}
+html[data-ui-theme] body .rpa-log :is(.log-line, .log-msg) { color: #def1e9 !important; }
+html[data-ui-theme] body .rpa-log .log-line { background: transparent !important; }
+html[data-ui-theme] body .rpa-log .log-line:hover { background: rgb(220 240 245 / .08) !important; }
+html[data-ui-theme] body .rpa-log :is(.rpa-muted, .log-empty) { color: var(--rpa-log-muted) !important; }
+html[data-ui-theme] body :is(.ai-message pre, .rpa-code-block, .rpa-json-editor) code { color: inherit !important; background: transparent !important; }
+html[data-ui-theme] body .rpa-log .log-time { color: #b4c9cd !important; }
+html[data-ui-theme] body .rpa-log .level-info .log-level { color: #abd4ff !important; }
+html[data-ui-theme] body .rpa-log :is(.level-error, .level-fail) :is(.log-msg, .log-level) { color: #ffb7c0 !important; }
+html[data-ui-theme] body .rpa-log :is(.level-warn, .level-warning) :is(.log-msg, .log-level) { color: #ffe2a2 !important; }
+html[data-ui-theme] body .rpa-log :is(.level-ok, .level-success) :is(.log-msg, .log-level) { color: #a4edc6 !important; }
+html[data-ui-theme] body :is(.ok, .local-status-row strong) { color: var(--glass-success) !important; }
+html[data-ui-theme] body :is(.status.running, .status-compact.running) { color: var(--glass-success) !important; }
+html[data-ui-theme] #runtime-info dd {
+  color: var(--glass-text) !important;
+  overflow-wrap: anywhere;
+}
+html[data-ui-theme] body .toast {
+  background: var(--glass-popup) !important;
+  color: var(--glass-text) !important;
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow) !important;
+  backdrop-filter: var(--glass-popup-blur);
+}
+
+/* Keep keyboard focus visibly separate from the reflective border. */
+html[data-ui-theme] body :is(
+  button, input, select, textarea, a, summary, [tabindex]
+):focus-visible {
+  outline: 2px solid var(--glass-accent-text) !important;
+  outline-offset: 3px !important;
+}
+html[data-ui-theme] body :is(.search, .ai-session-search):focus-within {
+  outline: 2px solid var(--glass-accent-text);
+  outline-offset: 2px;
+}
+
+/* Solid accessible fallback, shared by all material declarations. */
+html[data-ui-theme].reduce-transparency {
+  --glass-panel-alpha: 1;
+  --glass-field-alpha: 1;
+  --glass-popup-alpha: 1;
+  --glass-canvas-alpha: 1;
+  --glass-glint: 0;
+  --glass-blur: none;
+  --glass-popup-blur: none;
+  --glass-highlight: none;
+}
+html[data-ui-theme].reduce-transparency body *,
+html[data-ui-theme].reduce-transparency body *::before,
+html[data-ui-theme].reduce-transparency body *::after,
+html[data-ui-theme].reduce-transparency body dialog::backdrop {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+@supports not (backdrop-filter: blur(1px)) {
+  html[data-ui-theme][data-ui-theme] {
+    --glass-panel-alpha: 1;
+    --glass-field-alpha: 1;
+    --glass-popup-alpha: 1;
+    --glass-canvas-alpha: 1;
+    --glass-glint: 0;
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-ui-theme][data-ui-theme] {
+    --glass-panel-alpha: 1;
+    --glass-field-alpha: 1;
+    --glass-popup-alpha: 1;
+    --glass-canvas-alpha: 1;
+    --glass-glint: 0;
+    --glass-blur: none;
+    --glass-popup-blur: none;
+    --glass-line: var(--glass-muted);
+    --glass-highlight: none;
+  }
+  html[data-ui-theme][data-ui-theme] body *,
+  html[data-ui-theme][data-ui-theme] body *::before,
+  html[data-ui-theme][data-ui-theme] body *::after,
+  html[data-ui-theme][data-ui-theme] body dialog::backdrop {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui-theme] body *,
+  html[data-ui-theme] body *::before,
+  html[data-ui-theme] body *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (forced-colors: active) {
+  html[data-ui-theme][data-ui-theme] {
+    --glass-highlight: none;
+    --glass-panel: Canvas;
+    --glass-field: Canvas;
+    --glass-popup: Canvas;
+    --glass-text: CanvasText;
+    --glass-muted: CanvasText;
+    --glass-accent-text: LinkText;
+    --glass-primary: Highlight;
+    --glass-on-primary: HighlightText;
+    --glass-line: CanvasText;
+    --glass-blur: none;
+    --glass-popup-blur: none;
+    --glass-shadow: none;
+    --glass-control-shadow: none;
+  }
+  html[data-ui-theme] body { background: Canvas !important; }
+}
+
+} /* @layer liquid-glass */

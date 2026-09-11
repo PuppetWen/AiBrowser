@@ -16,8 +16,9 @@ function guardBrokenConsolePipe() {
 }
 guardBrokenConsolePipe();
 
-const { app, BrowserWindow, dialog, globalShortcut, ipcMain, screen, session, shell } = require('./host-bridge');
+const { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, screen, session, shell } = require('./host-bridge');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const { pathToFileURL } = require('url');
@@ -170,6 +171,19 @@ const UPDATE_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const UPDATE_TIMEOUT_MS = 20000;
 const UPDATE_ALLOWED_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
 const BUNDLED_RELEASE_HISTORY = Object.freeze([
+  {
+    version: '1.0.8',
+    name: 'AiBrowser v1.0.8',
+    publishedAt: '2026-09-11T04:00:00Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.8',
+    notes: [
+      '- 全部 6 套主题、7 种深浅外观统一液态玻璃材质。',
+      '- 工具栏、文件路径框、下拉菜单、弹窗及同步浮条增加通透染色与边缘高光。',
+      '- Windows 11 22H2 及以上启用原生亚克力背景，macOS 使用系统 vibrancy。',
+      '- 改善正文、提示、选中标签、代码与状态文字对比度，保留键盘焦点。',
+      '- 适配减少透明度、高对比度与减少动态效果，旧平台保留清晰回退。',
+    ].join('\n'),
+  },
   {
     version: '1.0.7',
     name: 'AiBrowser v1.0.7',
@@ -2062,20 +2076,52 @@ function chromeForTheme(themeId, colorMode) {
   return THEME_CHROME[themeId] || THEME_CHROME.default;
 }
 
+const windowGlassMaterials = new WeakMap();
+
+function nativeGlassMaterial(win) {
+  if (nativeTheme?.prefersReducedTransparency || nativeTheme?.shouldUseHighContrastColors || nativeTheme?.inForcedColorsMode) return 'none';
+  // Electron's DWM materials need Windows 11 22H2. Keep normal windows so
+  // resizing, native caption buttons, snapping and accessibility still work.
+  if (process.platform === 'win32' && typeof win.setBackgroundMaterial === 'function') {
+    const [major, , build] = os.release().split('.').map(Number);
+    if (major >= 10 && build >= 22621) return 'acrylic';
+  }
+  if (process.platform === 'darwin' && typeof win.setVibrancy === 'function') return 'vibrancy';
+  return 'none';
+}
+
 function applyWindowChrome(win, themeId, colorMode) {
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) return 'none';
   const chrome = chromeForTheme(themeId, colorMode);
-  try { win.setBackgroundColor(chrome.bg); } catch (_) {}
+  const dark = themeId === 'pixel-workstation' || themeId === 'aurora-glass' || (themeId === 'element-admin' && colorMode === 'dark');
+  try {
+    const source = dark ? 'dark' : 'light';
+    if (nativeTheme && nativeTheme.themeSource !== source) nativeTheme.themeSource = source;
+  } catch (_) {}
+  let material = nativeGlassMaterial(win);
+  try {
+    if (process.platform === 'win32' && typeof win.setBackgroundMaterial === 'function') {
+      win.setBackgroundMaterial(material === 'acrylic' ? 'acrylic' : 'none');
+    } else if (process.platform === 'darwin' && typeof win.setVibrancy === 'function') {
+      win.setVibrancy(material === 'vibrancy' ? 'under-window' : null);
+    }
+    win.setBackgroundColor(material === 'none' ? chrome.bg : '#00000000');
+  } catch (_) {
+    material = 'none';
+    try { win.setBackgroundColor(chrome.bg); } catch (_) {}
+  }
+  windowGlassMaterials.set(win, material);
   // Keep Windows caption overlay in sync with theme (light/dark native skin too)
   if (process.platform === 'win32' && typeof win.setTitleBarOverlay === 'function') {
     try {
       win.setTitleBarOverlay({
-        color: chrome.overlay,
+        color: material === 'none' ? chrome.overlay : '#00000000',
         symbolColor: chrome.symbol,
         height: 32,
       });
     } catch (_) {}
   }
+  return material;
 }
 
 let bundledPetCatalogCache = null;
@@ -2922,7 +2968,7 @@ function syncFloatingSnapshot() {
   const profiles = Array.isArray(engine?.status?.()) ? engine.status() : [];
   return {
     enabled: localSettingsCache.syncFloatingEnabled === true,
-    theme: { ...currentUiTheme },
+    theme: { ...currentUiTheme, nativeGlass: windowGlassMaterials.get(syncFloatingWindow) || 'none' },
     sync: { ...syncSnapshot(), runtime: liveSync?.runtimeStatus?.() || null, settings: liveSync?.getSettings?.() || null },
     sessions: profiles.filter((profile) => profile.running).map((profile) => ({
       id: String(profile.id || ''),
@@ -2982,6 +3028,7 @@ async function createSyncFloatingWindow() {
     },
   });
   syncFloatingWindow = win;
+  applyWindowChrome(win, currentUiTheme.themeId, currentUiTheme.colorMode);
   try { win.setAlwaysOnTop(true, 'floating'); } catch (_) {}
   win.setMenu(null);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -3134,6 +3181,7 @@ async function createWindow() {
   }
 
   const win = new BrowserWindow(options);
+  applyWindowChrome(win, currentUiTheme.themeId, currentUiTheme.colorMode);
   let taskbarShortcutReady = false;
   const applyWindowsTaskbarDetails = () => {
     if (!isWin || win.isDestroyed()) return;
@@ -3205,6 +3253,14 @@ async function createWindow() {
 app.whenReady().then(async () => {
   try { app.setName('AiBrowser'); } catch (_) { /* ignore */ }
   try { process.title = 'AiBrowser'; } catch (_) { /* ignore */ }
+  nativeTheme?.on('updated', () => {
+    const nativeGlass = applyWindowChrome(mainWindow, currentUiTheme.themeId, currentUiTheme.colorMode);
+    emit({ type: 'ui-glass-material', nativeGlass });
+    if (syncFloatingWindow && !syncFloatingWindow.isDestroyed()) {
+      const floatingGlass = applyWindowChrome(syncFloatingWindow, currentUiTheme.themeId, currentUiTheme.colorMode);
+      syncFloatingWindow.webContents.send('sync-floating:theme', { ...currentUiTheme, nativeGlass: floatingGlass });
+    }
+  });
   if (process.platform === 'darwin' && app.dock) {
     // Software Dock / shortcut icon = logo-pixel (not browser logo-native)
     try {
@@ -3384,12 +3440,12 @@ app.whenReady().then(async () => {
     const themeId = typeof payload === 'string' ? payload : String(payload?.themeId || '');
     const colorMode = typeof payload === 'object' && payload ? String(payload.colorMode || 'light') : 'light';
     currentUiTheme = { themeId: themeId || 'pixel-workstation', colorMode };
-    applyWindowChrome(win, themeId, colorMode);
+    const nativeGlass = applyWindowChrome(win, themeId, colorMode);
     if (syncFloatingWindow && !syncFloatingWindow.isDestroyed()) {
-      applyWindowChrome(syncFloatingWindow, currentUiTheme.themeId, currentUiTheme.colorMode);
-      syncFloatingWindow.webContents.send('sync-floating:theme', currentUiTheme);
+      const floatingGlass = applyWindowChrome(syncFloatingWindow, currentUiTheme.themeId, currentUiTheme.colorMode);
+      syncFloatingWindow.webContents.send('sync-floating:theme', { ...currentUiTheme, nativeGlass: floatingGlass });
     }
-    return { success: true, theme: themeId, colorMode };
+    return { success: true, theme: themeId, colorMode, nativeGlass };
   });
   registerTrustedIpc('system:set-sync-floating', (_event, enabled) => setSyncFloatingEnabled(enabled));
   registerTrustedIpc('kernel:status', () => engine.kernelStatus());

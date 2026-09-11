@@ -1450,6 +1450,27 @@ function readSavedColorMode() {
 
 let uiColorMode = readSavedColorMode();
 
+function applyNativeGlassMaterial(material) {
+  document.documentElement.dataset.nativeGlass = ['acrylic', 'vibrancy'].includes(material) ? material : 'none';
+}
+
+let uiChromeRequest = 0;
+function syncUiChrome(themeId, colorMode) {
+  const request = ++uiChromeRequest;
+  try {
+    Promise.resolve(window.ops?.setUiChrome?.({ themeId, colorMode })).then((result) => {
+      // Rapid theme changes may finish out of order; keep the newest material.
+      if (request === uiChromeRequest) applyNativeGlassMaterial(result?.nativeGlass);
+    }).catch(() => {
+      if (request === uiChromeRequest) applyNativeGlassMaterial('none');
+    });
+  } catch (_) { applyNativeGlassMaterial('none'); }
+}
+
+window.ops?.onEvent?.((value) => {
+  if (value?.type === 'ui-glass-material') applyNativeGlassMaterial(value.nativeGlass);
+});
+
 function syncAppearanceControls(theme) {
   const panel = $('#theme-appearance');
   if (!panel) return;
@@ -1477,9 +1498,7 @@ function applyColorMode(mode, persist = true) {
     document.documentElement.style.colorScheme = definition.colorScheme;
   }
   syncAppearanceControls(theme);
-  try {
-    window.ops?.setUiChrome?.({ themeId: theme, colorMode: theme === 'element-admin' ? uiColorMode : definition?.colorScheme || 'light' });
-  } catch (_) {}
+  syncUiChrome(theme, theme === 'element-admin' ? uiColorMode : definition?.colorScheme || 'light');
   requestAnimationFrame(() => {
     refreshIcons();
     if (typeof positionThemePopover === 'function') positionThemePopover();
@@ -1510,12 +1529,7 @@ function applyUiTheme(value, persist = true) {
   });
   syncAppearanceControls(theme);
   // Match native window chrome (title bar) to current skin + appearance
-  try {
-    window.ops?.setUiChrome?.({
-      themeId: theme,
-      colorMode: theme === 'element-admin' ? uiColorMode : definition.colorScheme,
-    });
-  } catch (_) {}
+  syncUiChrome(theme, theme === 'element-admin' ? uiColorMode : definition.colorScheme);
   // Re-apply Lucide after theme CSS (stroke / currentColor) is in effect
   requestAnimationFrame(() => {
     refreshIcons();

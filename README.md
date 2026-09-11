@@ -41,6 +41,7 @@ Release packages include the desktop runtime, Chromium kernel, Firefox-Reverse k
 | Automation | Local automation workflows, script execution, reusable templates, and batch operations |
 | Data portability | Project-relative paths and per-environment data stored beside portable builds |
 | Desktop integration | Branded executable, stable Windows AppUserModelID, Start Menu shortcut, and taskbar pinning |
+| Liquid glass themes | Translucent toolbars, path fields, dialogs, and sync controls across all six themes; native acrylic on Windows 11 22H2 or later, with solid accessible fallbacks |
 
 Optional AI or cloud integrations may require credentials for the provider selected by the user. Credentials and browser profiles are local data and are intentionally excluded from this repository.
 
