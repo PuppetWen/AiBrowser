@@ -43,9 +43,9 @@ function Assert-Source {
   $tagCommit = Get-CheckedOutput 'git' @('-C', $projectDirectory, 'rev-parse', '--verify', ($ReleaseTag + '^{commit}'))
   if ($headCommit -cne $SourceCommit -or $tagCommit -cne $SourceCommit) { throw 'Product HEAD and release tag must resolve to the exact input commit' }
   $package = Get-Content -LiteralPath (Join-Path $appDirectory 'package.json') -Raw | ConvertFrom-Json
-  $lock = Get-Content -LiteralPath (Join-Path $appDirectory 'package-lock.json') -Raw | ConvertFrom-Json
-  if ($package.version -cne $version -or $lock.version -cne $version -or $lock.packages.''.version -cne $version) { throw 'Source package and lockfile versions must match the release tag' }
-  if ($package.devDependencies.'desktop-shell' -cne 'npm:electron@43.1.1' -or $lock.packages.'node_modules/desktop-shell'.version -cne '43.1.1') { throw 'Unexpected desktop runtime version' }
+  $lock = Get-Content -LiteralPath (Join-Path $appDirectory 'package-lock.json') -Raw | ConvertFrom-Json -AsHashtable
+  if ($package.version -cne $version -or $lock['version'] -cne $version -or $lock['packages']['']['version'] -cne $version) { throw 'Source package and lockfile versions must match the release tag' }
+  if ($package.devDependencies.'desktop-shell' -cne 'npm:electron@43.1.1' -or $lock['packages']['node_modules/desktop-shell']['version'] -cne '43.1.1') { throw 'Unexpected desktop runtime version' }
   $changes = Get-CheckedOutput 'git' @('-C', $projectDirectory, 'status', '--porcelain', '--untracked-files=no')
   if ($changes) { throw 'Tracked product source changed during CI' }
 }
