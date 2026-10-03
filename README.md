@@ -38,6 +38,7 @@ Release packages include the desktop runtime, Chromium kernel, Firefox-Reverse k
 | Chinese IME handling | Composition-aware text synchronization avoids interrupting unfinished Pinyin input |
 | Window management | Uniform tiling, cascade, maximize, minimize, restore, and Excel-style custom grid layouts |
 | Proxy profiles | System, HTTP/HTTPS, and SOCKS proxy parsing, forwarding, retry, and environment assignment |
+| Strict privacy | Per-environment fixed proxy gateway, failure-triggered disconnection, fingerprint verification, and Windows browser outbound protection |
 | Automation | Local automation workflows, script execution, reusable templates, and batch operations |
 | Data portability | Project-relative paths and per-environment data stored beside portable builds |
 | Desktop integration | Branded executable, stable Windows AppUserModelID, Start Menu shortcut, and taskbar pinning |
@@ -55,7 +56,15 @@ Open the [latest release](https://github.com/PuppetWen/AiBrowser/releases/latest
 | [Single-file portable package](https://github.com/PuppetWen/AiBrowser/releases/latest/download/AiBrowser-Windows-x86_64-with-kernel-Portable.exe) | A simple first-run download | Run the EXE; it creates `AiBrowser-Portable` beside itself and starts the app |
 | [Windows installer](https://github.com/PuppetWen/AiBrowser/releases/latest/download/AiBrowser-Windows-x86_64-with-kernel-Setup.exe) | Normal desktop installation | Run Setup and use `Uninstall.exe` when removal is needed |
 
+Verify downloads against [SHA256SUMS.txt](https://github.com/PuppetWen/AiBrowser/releases/latest/download/SHA256SUMS.txt).
+
 The executables are currently unsigned. Windows SmartScreen may show an unknown-publisher warning on first launch.
+
+### Upgrading to v1.0.9
+
+Strict privacy is enabled by default for new and existing environments. Before starting an environment, enable Windows Firewall for all network profiles, then open **Edit environment → Proxy configuration → Install network protection** and approve the Windows administrator prompt. Configure a fixed HTTP, HTTPS, or SOCKS5 proxy, or an enabled system proxy that resolves to a fixed endpoint. Protection checks must pass before the browser starts; replacing or moving the kernel may require installing the rules again.
+
+Strict mode supports Windows Chromium. It rejects Firefox, native fingerprint mode, direct connections, PAC, and automatic session restore. Existing session files are retained. Disabling strict privacy selects compatibility mode, which does not provide the same protection; installed firewall rules still apply to environments using the same kernel.
 
 ## Portable usage
 
@@ -128,6 +137,9 @@ Generated artifacts are written to `Browserapp\dist` and are intentionally exclu
 
 ## Privacy and security
 
+- Strict privacy keeps each environment on its own fixed proxy gateway. Proxy failures, fingerprint setup or verification failures, and CDP disconnections close the gateway before stopping the browser. Real webpage geolocation and WebRTC are disabled, and the legacy host DNS probe is not performed.
+- Browser profiles remain separate, while environments share the Windows system and local user permissions. Upstream proxy software must also disable DIRECT fallback. AI, update, subscription, and extension-download requests from the management app are outside each browser environment's network channel.
+- Privacy checks have passed with simulated CDP and local proxies. Real-browser packet-capture acceptance testing with active firewall rules is still pending; these checks do not establish zero leakage or complete fingerprint consistency. See the [privacy repair details](https://github.com/PuppetWen/AiBrowser/blob/v1.0.9/docs/PRIVACY_HARDENING_2026-10-02.md).
 - `browser-data`, account lists, proxy credentials, API keys, caches, logs, and test output are excluded from Git.
 - Do not commit `.env` files, exported profiles, cookies, local databases, or screenshots containing account information.
 - Review automation scripts before running them against third-party websites.
@@ -139,4 +151,4 @@ Issues and pull requests are welcome. Please describe the browser engine, Window
 
 ## Release verification
 
-The Windows x86-64 release is tested for ZIP extraction, single-file portable startup, installer startup, uninstall cleanup, bundled Chromium/Firefox availability, portable data placement, and taskbar relaunch identity.
+Earlier releases were tested for ZIP extraction, single-file portable startup, installer startup, uninstall cleanup, bundled kernel availability, portable data placement, and taskbar identity. Verification for v1.0.9 consists of static package content and version checks, plus offline and loopback regressions. Installer and uninstall tests have not been repeated for this version, to preserve the existing local installation. Real-browser outbound enforcement and packet-capture acceptance testing remain pending. See the [v1.0.9 release notes](https://github.com/PuppetWen/AiBrowser/blob/v1.0.9/docs/releases/v1.0.9.md) for the protection requirements and validation limits.

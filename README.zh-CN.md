@@ -38,6 +38,7 @@ Release 成品已包含桌面运行时、Chromium 内核、Firefox-Reverse 内�
 | 中文输入法 | 感知输入法组合状态，避免拼音尚未完成时被同步逻辑提前打断 |
 | 窗口管理 | 等大小平铺、层叠、最大化、最小化、恢复及 Excel 风格自定义网格布局 |
 | 代理配置 | 系统代理、HTTP/HTTPS、SOCKS 解析、转发、重试及环境分配 |
+| 严格隐私 | 每环境固定代理网关、失败断网、指纹读回验证及 Windows 浏览器出站保护 |
 | 自动化 | 本地自动化工作流、脚本执行、模板和批量操作 |
 | 便携数据 | 项目相对路径，便携版环境数据保存在程序目录旁边 |
 | 桌面集成 | 品牌启动程序、稳定 AppUserModelID、开始菜单快捷方式和任务栏固定 |
@@ -55,7 +56,15 @@ Release 成品已包含桌面运行时、Chromium 内核、Firefox-Reverse 内�
 | [单文件便携包](https://github.com/PuppetWen/AiBrowser/releases/latest/download/AiBrowser-Windows-x86_64-with-kernel-Portable.exe) | 希望只下载一个启动文件 | 运行 EXE，旁边会生成 `AiBrowser-Portable` 并自动启动 |
 | [Windows 安装包](https://github.com/PuppetWen/AiBrowser/releases/latest/download/AiBrowser-Windows-x86_64-with-kernel-Setup.exe) | 常规桌面安装 | 运行 Setup，需要卸载时使用 `Uninstall.exe` |
 
+下载后可使用 [SHA256SUMS.txt](https://github.com/PuppetWen/AiBrowser/releases/latest/download/SHA256SUMS.txt) 校验文件。
+
 当前 EXE 尚未进行数字签名，首次运行时 Windows SmartScreen 可能显示未知发布者提示。
+
+### 升级至 v1.0.9
+
+新环境和已有环境默认开启严格隐私保护。启动前，请先为全部网络配置文件开启 Windows 防火墙，再进入 **编辑环境 → 代理配置 → 安装网络保护**，完成 Windows 管理员授权。配置固定 HTTP、HTTPS 或 SOCKS5 代理，或已启用且能解析为固定端点的系统代理。保护校验通过后才能启动浏览器；更换或移动内核后可能需要重新安装规则。
+
+严格模式支持 Windows Chromium，会拒绝 Firefox、原生指纹、直接连接、PAC 和自动恢复会话，已有会话文件保留。关闭严格隐私后进入兼容模式，保护能力不同；已安装的防火墙规则仍约束使用同一内核的环境。
 
 ## 便携包使用方法
 
@@ -128,6 +137,9 @@ node scripts\package-portable.js
 
 ## 隐私与安全
 
+- 严格模式中，每个环境通过自己的固定代理网关联网。代理失败、指纹注入或读回失败、CDP 断开时，先关闭网关，再停止浏览器。真实网页定位和 WebRTC 被禁用，旧宿主 DNS 探测不再执行。
+- 环境资料相互隔离，仍共用 Windows 系统及本机用户权限。上游代理软件也需要关闭 DIRECT 回退；管理应用的 AI、更新、订阅导入和扩展下载不属于各浏览器环境的网络通道。
+- 隐私检查已通过模拟 CDP 和本机回环代理回归；尚未完成防火墙规则生效后的真实浏览器抓包验收，不能据此承诺零泄露或全部指纹一致。详见[隐私修复说明](https://github.com/PuppetWen/AiBrowser/blob/v1.0.9/docs/PRIVACY_HARDENING_2026-10-02.md)。
 - `browser-data`、账号列表、代理凭据、API Key、缓存、日志和测试结果不会提交到 Git。
 - 不要提交 `.env`、导出的浏览器环境、Cookie、本地数据库或包含账号信息的截图。
 - 对第三方网站运行自动化任务之前，请先审查脚本内容。
@@ -139,4 +151,4 @@ node scripts\package-portable.js
 
 ## 发布验证
 
-Windows x86-64 成品已经实际测试 ZIP 解压启动、单文件便携启动、安装包启动、卸载清理、Chromium/Firefox 内核完整性、便携数据位置和任务栏重新启动身份。
+旧版本曾测试 ZIP 解压启动、单文件便携启动、安装包启动、卸载清理、内核完整性、便携数据位置和任务栏身份。本次 v1.0.9 验证为成品内容及版本的静态一致性检查，以及离线和回环回归；为保留本机已有安装，尚未重跑此版本的真实安装与卸载测试。真实浏览器出站阻断及抓包验收仍待完成。详见 [v1.0.9 发布说明](https://github.com/PuppetWen/AiBrowser/blob/v1.0.9/docs/releases/v1.0.9.md)中的保护条件与验证边界。

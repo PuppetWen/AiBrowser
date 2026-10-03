@@ -392,7 +392,9 @@ function nsisGlob(value) {
 }
 
 function packageBuildEnvironment() {
-  const temp = path.resolve(appRoot, '..', '.cache', 'package-temp');
+  const temp = process.env.OPENBROWSER_PACKAGE_TEMP
+    ? path.resolve(process.env.OPENBROWSER_PACKAGE_TEMP)
+    : path.resolve(appRoot, '..', '.cache', 'package-temp');
   fs.mkdirSync(temp, { recursive: true });
   return { ...process.env, TEMP: temp, TMP: temp };
 }
@@ -712,10 +714,12 @@ function packageWindows() {
   copyProductionDependencies(resourceApp);
 
   const repoRoot = path.resolve(appRoot, '..');
-  for (const document of ['README.md', 'DISCLAIMER.md', 'LICENSE']) {
+  for (const document of ['README.md', 'README.zh-CN.md', 'DISCLAIMER.md', 'LICENSE']) {
     const source = path.join(repoRoot, document);
     if (fs.existsSync(source)) fs.copyFileSync(source, path.join(packageRoot, document));
   }
+  const releaseNotes = path.join(repoRoot, 'docs', 'releases', `v${appVersion}.md`);
+  if (fs.existsSync(releaseNotes)) fs.copyFileSync(releaseNotes, path.join(packageRoot, 'RELEASE-NOTES.md'));
   const notice = path.join(appRoot, 'THIRD-PARTY-NOTICES.md');
   if (fs.existsSync(notice)) fs.copyFileSync(notice, path.join(packageRoot, 'THIRD-PARTY-NOTICES.md'));
 
@@ -730,6 +734,8 @@ function packageWindows() {
       : '4. 本 Windows x64 包未启用内核变体；请使用包含内置内核的正式安装包，或在“本地设置”选择自定义 Chromium。运行时不会自动下载内核。',
     '5. 环境数据、缓存、日志、崩溃转储、插件和下载内容均保存在本便携包目录内，不写入系统 AppData。',
     '6. 请勿把 Cookies、代理密码或浏览器 Profile 上传到 GitHub。',
+    '7. 严格隐私模式默认开启。先开启全部网络配置文件的 Windows 防火墙，再通过“编辑环境 → 代理配置 → 安装网络保护”安装规则并配置固定代理；保护未就绪会拒绝启动。',
+    '8. 代理或指纹保护发生故障时，环境会关闭网络并停止；请修复配置后重新启动。详细升级要求和已知保护边界见 RELEASE-NOTES.md。',
     '',
     '本便携包不包含任何第三方商业浏览器二进制。',
     '',
@@ -737,7 +743,7 @@ function packageWindows() {
 
   const zip = path.join(distRoot, `${packageArtifactStem()}.zip`);
   removeIfExists(zip);
-  run('powershell', ['-NoProfile', '-Command', `Compress-Archive -LiteralPath '${packageRoot.replace(/'/g, "''")}' -DestinationPath '${zip.replace(/'/g, "''")}' -CompressionLevel Optimal`]);
+  run('powershell', ['-NoProfile', '-Command', `Compress-Archive -LiteralPath '${packageRoot.replace(/'/g, "''")}' -DestinationPath '${zip.replace(/'/g, "''")}' -CompressionLevel Optimal`], { env: packageBuildEnvironment() });
   console.log('便携版压缩包：' + zip);
   packageWindowsPortableExe(packageRoot);
   packageWindowsInstaller(packageRoot);

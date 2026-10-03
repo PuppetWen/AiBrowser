@@ -172,6 +172,20 @@ const UPDATE_TIMEOUT_MS = 20000;
 const UPDATE_ALLOWED_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
 const BUNDLED_RELEASE_HISTORY = Object.freeze([
   {
+    version: '1.0.9',
+    name: 'AiBrowser v1.0.9',
+    publishedAt: '2026-10-03T04:12:35Z',
+    url: 'https://github.com/PuppetWen/AiBrowser/releases/tag/v1.0.9',
+    notes: [
+      '- 默认开启严格隐私保护，每个环境通过独立网关和固定代理联网。',
+      '- 代理失败、指纹注入或读回失败、CDP 断开时先断网，再关闭环境；禁止回落直连。',
+      '- 禁用真实网页定位与 WebRTC，停用宿主直连 DNS 探测，启动页面等待保护就绪。',
+      '- 首次使用需开启 Windows 防火墙，并在环境代理配置中安装网络保护规则。',
+      '- 严格模式仅支持 Windows Chromium；Firefox、原生指纹和会话自动恢复会被拒绝。',
+      '- 已通过离线与回环回归测试；尚未完成真实浏览器抓包验收，不承诺零泄露。',
+    ].join('\n'),
+  },
+  {
     version: '1.0.8',
     name: 'AiBrowser v1.0.8',
     publishedAt: '2026-09-11T04:00:00Z',
