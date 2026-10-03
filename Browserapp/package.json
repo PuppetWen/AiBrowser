@@ -35,6 +35,7 @@
     "selftest:portable": "node portable-paths-selftest.js",
     "selftest:desktop-package-ui": "node desktop-packaging-ui-selftest.js",
     "selftest:network-modes": "node network-mode-selftest.js",
+    "selftest:privacy": "node privacy-hardening-selftest.js && node fingerprint-failure-lifecycle-selftest.js",
     "selftest:firefox-kernel": "node firefox-kernel-selftest.js",
     "selftest:firefox-native-sync": "node firefox-native-sync-selftest.js",
     "selftest:mixed-firefox-sync": "node mixed-firefox-sync-selftest.js",

@@ -21,6 +21,7 @@ function harness() {
   let killResult = true;
   let inject = async () => {};
   let attached;
+  let disconnected;
   const target = { id: 'managed-target', webSocketDebuggerUrl: 'ws://synthetic', url: 'about:blank' };
   const cdp = {
     tabs: async () => [target],
@@ -30,7 +31,7 @@ function harness() {
       calls.push([method, params]);
       return { result: { value: { hardwareConcurrency: 64, userAgent: 'host-ua' } } };
     },
-    connect: async (_ws, options) => { attached = options.onEvent; return connection; },
+    connect: async (_ws, options) => { attached = options.onEvent; disconnected = options.onDisconnect; return connection; },
   };
   const connection = {
     command: async (method, params, options) => { calls.push([method, params, options]); return { success: true }; },
@@ -59,7 +60,7 @@ function harness() {
   engine.running = new Map();
   engine.emit = (event) => { events.push(event); };
   engine.clearRunningWatch = () => {};
-  return { engine, cdp, calls, kills, connection, context, events, setKillResult: (value) => { killResult = value; }, setInject: (callback) => { inject = callback; }, onAttached: (event) => attached(event, connection) };
+  return { engine, cdp, calls, kills, connection, context, events, setKillResult: (value) => { killResult = value; }, setInject: (callback) => { inject = callback; }, onAttached: (event) => attached(event, connection), onDisconnect: () => disconnected(new Error('CDP lost')) };
 }
 
 async function checkRuntimeAndReload() {
@@ -152,6 +153,7 @@ async function checkStartupTail() {
       launchBinary: 'synthetic-browser', browser: item.browser, fpLog: async () => {},
       summarizeFp: () => ({}), fingerprintLogPath: () => 'synthetic-log',
       fingerprintForNativeKernelInject: (value) => value, Set,
+      customStartUrls: [], ...require('./automation/privacy-policy'),
     };
     const run = vm.runInNewContext('(async function() {\n' + tail + '\n})', context);
     if (['soft', 'ok'].includes(failureAt)) {
@@ -192,10 +194,33 @@ async function checkOwnedTerminationFallback() {
   assert.equal(uncertain.events.at(-1).reason, 'fingerprint-injection-failed');
 }
 
+async function checkStrictRuntime() {
+  for (const scenario of ['page-soft', 'worker-exception', 'worker-mismatch', 'disconnect']) {
+    const h = harness(); let blocked = false;
+    const item = { profile: { id: 'strict-test', privacy: { strict: true }, exitTimezone: 'UTC' }, port: 123, pid: 424242, root: 'owned', browser: { path: 'owned-browser' }, child: { exitCode: null }, proxyForwarder: { block: () => { blocked = true; } } };
+    const command = h.connection.command;
+    h.connection.command = async (method, params, options) => {
+      await command(method, params, options);
+      if (method === 'Browser.close') { assert.equal(blocked, true, 'gate closes before asynchronous shutdown'); item.child.exitCode = 0; }
+      if (method === 'Runtime.evaluate') return scenario === 'worker-exception' ? { exceptionDetails: { text: 'Uncaught' } } : { result: { value: ['timezone'] } };
+      return { success: true };
+    };
+    h.engine.applyFingerprintToSession = async () => { throw new Error('temporary soft override'); };
+    await h.engine.startWorkerFingerprintInjection(item, fp);
+    if (scenario === 'disconnect') h.onDisconnect();
+    else h.onAttached({ method: 'Target.attachedToTarget', params: { sessionId: 'protected', targetInfo: { type: scenario === 'page-soft' ? 'page' : 'worker', targetId: 'target', url: 'https://fixture.invalid' }, waitingForDebugger: true } });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(blocked, true); assert.equal(item.stopping, true);
+    assert.equal(h.calls.some(([method]) => method === 'Runtime.runIfWaitingForDebugger'), false);
+  }
+  console.log('PASS strict page/worker errors and CDP loss close network before process work; targets never resume');
+}
+
 (async () => {
   await checkRuntimeAndReload();
   await checkAttached();
   await checkStartupTail();
   await checkOwnedTerminationFallback();
+  await checkStrictRuntime();
   console.log('FINGERPRINT_FAILURE_LIFECYCLE_SELFTEST_OK runtime_close=1 retry_propagation=1 reload_propagation=1 attached_no_resume=1 startup_no_ready=1 soft_compatibility=1 owned_stop=1');
 })().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

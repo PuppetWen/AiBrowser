@@ -25,7 +25,8 @@ function makeEngineStub() {
   engine.persist = async () => {};
   engine.emit = () => {};
   // bind methods that use this
-  engine.sanitizeProfile = BrowserEngine.prototype.sanitizeProfile.bind(engine);
+  // These cases exercise optional legacy extraction/fallback policies.
+  engine.sanitizeProfile = raw => BrowserEngine.prototype.sanitizeProfile.call(engine, { ...raw, privacy: { ...raw.privacy, strict: false } });
   engine.resolveProfileProxyConfig = BrowserEngine.prototype.resolveProfileProxyConfig.bind(engine);
   engine.fingerprintPatchFromNetwork = BrowserEngine.prototype.fingerprintPatchFromNetwork.bind(engine);
   engine.applyNetworkToProfile = BrowserEngine.prototype.applyNetworkToProfile.bind(engine);

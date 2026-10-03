@@ -23,7 +23,7 @@ function main() {
   const engineSrc = fs.readFileSync(path.join(__dirname, 'engine.js'), 'utf8');
   const startIdx = engineSrc.indexOf('item.startupExtensionGuard');
   assert.ok(startIdx > 0, 'startup block present');
-  const block = engineSrc.slice(startIdx, startIdx + 4500);
+  const block = engineSrc.slice(startIdx, engineSrc.indexOf('return this.publicRunning(profile.id)', startIdx));
   // Match call sites only (not comments mentioning keepDefaultTab before inject).
   const injectPos = block.indexOf('await this.applyRuntimeSettings');
   const keepPos = block.indexOf('await this.keepDefaultTab');

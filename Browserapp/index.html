@@ -238,8 +238,12 @@
               </section>
               <section class="editor-panel" data-editor-panel="proxy">
                 <h3>代理配置</h3>
-                <label class="check-row"><input id="editor-proxy-check-start" type="checkbox"> 启动前检测出口 IP（动态代理建议开启；未勾选时由报告页打开后检测）</label>
-                <p class="network-mode-hint">本地直连会绕过系统代理；系统代理直接使用 Windows/macOS 当前代理（如 FClash）；自定义代理支持 HTTP / HTTPS / SOCKS5。</p>
+                <label class="check-row"><input id="editor-strict-privacy" type="checkbox" checked> 严格隐私保护（推荐）</label>
+                <p class="network-mode-hint">严格模式仅支持 Windows Chromium：代理在启动时固定；失败即断网；禁止直连、网页定位、会话恢复和原生指纹，WebRTC 禁用非代理 UDP。系统代理需提供固定端点，不支持 PAC。动态提取/刷新 URL 必须清空。Firefox 须关闭严格模式，不能提供同等指纹保护。</p>
+                <button id="editor-install-network-protection" type="button" class="btn-secondary">安装网络保护</button>
+                <p id="editor-network-protection-status" role="status">首次使用需管理员授权：保护所选独立内核及其辅助程序，禁止直接对外联网；规则持续生效，也会影响使用同一内核的非严格环境。保护未就绪时禁止启动。不会修改其他浏览器规则。</p>
+                <label class="check-row"><input id="editor-proxy-check-start" type="checkbox"> 启动前检测出口 IP（严格模式强制开启）</label>
+                <p class="network-mode-hint">自定义代理支持 HTTP / HTTPS / SOCKS5。若本机代理软件自身回退直连，需在该软件中同时关闭 DIRECT 回退并开启断网保护。</p>
                 <div class="segmented" id="editor-network-mode" role="radiogroup" aria-label="网络模式">
                   <label><input type="radio" name="editor-network" value="direct" checked>本地直连</label>
                   <label><input type="radio" name="editor-network" value="system">系统代理</label>

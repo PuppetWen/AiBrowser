@@ -209,6 +209,7 @@ function main() {
     networkMode: 'proxy',
     proxy: 'socks5://127.0.0.1:1080',
     privacy: {
+      strict: false, // Compatibility mode preserves explicit real WebRTC.
       battery: 'noise',
       webgpu: 'webgl',
       webrtc: 'real',
@@ -262,7 +263,7 @@ async function runProxyPolicies(engineBlock, BrowserEngine) {
       networkMode: 'proxy',
       proxy: 'socks5://127.0.0.1:1',
       proxyMeta: { checkOnStart: true, notReadyPolicy: 'block', requireReady: true },
-      privacy: {},
+      privacy: { strict: false },
     });
   } catch (error) {
     blockedErr = error;
@@ -288,7 +289,7 @@ async function runProxyPolicies(engineBlock, BrowserEngine) {
     networkMode: 'proxy',
     proxy: 'socks5://127.0.0.1:1',
     proxyMeta: { checkOnStart: true, notReadyPolicy: 'continue', requireReady: false },
-    privacy: {},
+    privacy: { strict: false },
   });
   assert.ok(String(continued.proxy).includes('127.0.0.1:1'));
   assert.ok(events.some((e) => e.type === 'proxy-warn' || e.type === 'proxy-error'));
@@ -311,7 +312,7 @@ async function runProxyPolicies(engineBlock, BrowserEngine) {
     networkMode: 'proxy',
     proxy: 'socks5://127.0.0.1:1',
     proxyMeta: { checkOnStart: true, notReadyPolicy: 'direct', requireReady: true },
-    privacy: {},
+    privacy: { strict: false },
   });
   assert.strictEqual(direct.networkMode, 'direct');
   assert.ok(/direct/i.test(direct.proxy));
@@ -387,7 +388,7 @@ async function runProxyPolicies(engineBlock, BrowserEngine) {
     "editorSet('#editor-battery'",
     "editorCheck('#editor-proxy-require-ready'",
     "stabilityMode: ['off', 'auto', 'force']",
-    "requireReady: proxyMeta.requireReady !== false",
+    "requireReady: strictPrivacy || proxyMeta.requireReady !== false",
     "apiExtractUrl: String(proxyMeta.apiExtractUrl || '')",
   ]) {
     assert.ok(rendererSrc.includes(needle), 'renderer wiring missing: ' + needle);

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('ops', Object.freeze({
   getPetSettings: () => ipcRenderer.invoke('pet:settings:get'),
   setPetSettings: (payload) => ipcRenderer.invoke('pet:settings:set', payload || {}),
   kernelStatus: () => ipcRenderer.invoke('kernel:status'),
+  installPrivacyFirewall: () => ipcRenderer.invoke('privacy:install-firewall'),
   kernelDownload: (force) => ipcRenderer.invoke('kernel:download', force),
   kernelCheckUpdate: () => ipcRenderer.invoke('kernel:check-update'),
   kernelSetCustom: (path) => ipcRenderer.invoke('kernel:set-custom', path),

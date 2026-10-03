@@ -10,6 +10,9 @@ const { normalizeWindowsProxyServer, parseWindowsInternetSettings, parseMacSyste
 async function main() {
   const fakeApp = { getPath: () => path.join(__dirname, '..', 'functional-selftest-data') };
   const engine = new BrowserEngine(fakeApp);
+  engine.persist = async () => {}; // This suite checks normalization, not storage.
+  // Optional detection and direct/system modes belong to compatibility mode.
+  engine.sanitizeProfile = raw => BrowserEngine.prototype.sanitizeProfile.call(engine, { ...raw, privacy: { ...raw.privacy, strict: false } });
 
   const direct = engine.sanitizeProfile({ id: 'direct', name: 'Direct', networkMode: 'direct', proxy: 'System' });
   assert.strictEqual(direct.networkMode, 'direct');
@@ -102,7 +105,7 @@ async function main() {
   const rendererSource = await fs.readFile(path.join(__dirname, 'renderer.js'), 'utf8');
   assert.match(rendererSource, /network:\s*18/);
 
-  const root = await fs.mkdtemp(path.join(__dirname, '.network-mode-selftest-'));
+  const root = await fs.mkdtemp(path.join(process.env.AIBROWSER_TEST_TMP || __dirname, '.network-mode-selftest-'));
   try {
     await externalKernel.writeProfilePrefs(path.join(root, 'direct'), { networkMode: 'direct' });
     await externalKernel.writeProfilePrefs(path.join(root, 'system'), { networkMode: 'system' });

@@ -239,7 +239,9 @@ class MihomoManager {
         'unified-delay': true,
         proxies,
         listeners,
-        rules: ['MATCH,DIRECT'],
+        // Listeners bind a specific upstream. Any traffic without that binding
+        // must fail closed instead of silently using the host's connection.
+        rules: ['MATCH,REJECT'],
       },
     };
   }

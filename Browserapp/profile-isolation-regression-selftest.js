@@ -16,7 +16,7 @@ const {
 } = require('./automation/isolation');
 
 async function main() {
-  const cacheRoot = path.resolve(__dirname, '..', '.cache');
+  const cacheRoot = path.resolve(process.env.AIBROWSER_TEST_TMP || path.join(__dirname, '..', '.cache'));
   await fsp.mkdir(cacheRoot, { recursive: true });
   const testRoot = await fsp.mkdtemp(path.join(cacheRoot, 'profile-isolation-regression-'));
   const engines = [];
@@ -30,7 +30,7 @@ async function main() {
     engines.push(engine);
     return engine;
   }
-  function profile(id, extra = {}) { return { id, name: id, ...extra }; }
+  function profile(id, extra = {}) { return { id, name: id, privacy: { strict: false }, ...extra }; }
   function pass(name) { console.log('PASS ' + name); }
   try {
     const engine = engineAt('profiles');

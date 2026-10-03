@@ -3449,6 +3449,7 @@ app.whenReady().then(async () => {
   });
   registerTrustedIpc('system:set-sync-floating', (_event, enabled) => setSyncFloatingEnabled(enabled));
   registerTrustedIpc('kernel:status', () => engine.kernelStatus());
+  registerTrustedIpc('privacy:install-firewall', () => engine.installPrivacyFirewall());
   registerTrustedIpc('kernel:download', async (_event, force) => engine.ensureIndependentKernel(Boolean(force)));
   registerTrustedIpc('kernel:check-update', async () => engine.checkKernelUpdate());
   registerTrustedIpc('kernel:set-custom', async (_event, binaryPath) => engine.setCustomKernel(String(binaryPath || '')));

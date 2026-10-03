@@ -48,7 +48,7 @@ vm.runInNewContext(fs.readFileSync(filename, 'utf8'), context, { filename });
 const { BrowserEngine } = context.module.exports;
 
 async function main() {
-  const cacheRoot = path.resolve(__dirname, '..', '.cache');
+  const cacheRoot = path.resolve(process.env.AIBROWSER_TEST_TMP || path.join(__dirname, '..', '.cache'));
   await fsp.mkdir(cacheRoot, { recursive: true });
   const testRoot = await fsp.mkdtemp(path.join(cacheRoot, 'native-fingerprint-engine-'));
   try {
@@ -56,7 +56,7 @@ async function main() {
     engine.emit = () => {};
     const raw = {
       id: 'native-profile', name: 'Native fixture', networkMode: 'direct', language: 'fr-FR', userAgent: 'stale-user-agent',
-      privacy: { fingerprintMode: 'native', webrtc: 'real', cores: 6, memory: 8, canvas: 'noise', media: 'blocked', geoMode: 'disabled', fontMode: 'custom', fontSize: 21, refreshFingerprintOnStart: true, stabilityMode: 'off' },
+      privacy: { strict: false, fingerprintMode: 'native', webrtc: 'real', cores: 6, memory: 8, canvas: 'noise', media: 'blocked', geoMode: 'disabled', fontMode: 'custom', fontSize: 21, refreshFingerprintOnStart: true, stabilityMode: 'off' },
       advanced: { showInfoPage: false, blockUrls: 'https://blocked.invalid/*' },
     };
     const profile = engine.sanitizeProfile(raw);
@@ -89,10 +89,10 @@ async function main() {
     assert.equal(prefs.intl.accept_languages, undefined);
     assert.equal(prefs.intl.selected_languages, undefined);
     assert.equal(prefs.webkit.webprefs.default_font_size, undefined);
-    assert.equal(prefs.profile.default_content_setting_values.geolocation, undefined);
+    assert.equal(prefs.profile.default_content_setting_values.geolocation, 2);
     assert.equal(prefs.profile.default_content_setting_values.media_stream_mic, undefined);
-    assert.equal(prefs.profile.content_settings.exceptions.geolocation['https://fixture.invalid,*'].setting, 1);
-    console.log('PASS native preferences remove global overrides and preserve site permissions');
+    assert.equal(prefs.profile.content_settings.exceptions.geolocation, undefined);
+    console.log('PASS native preferences remove identity overrides while honoring denied geolocation');
 
     const native = fingerprint.buildFingerprint(profile);
     const item = { profile, fingerprint: native };

@@ -413,6 +413,7 @@ function normalizeProfileSettings(profile) {
     proxyPassword, proxy_password, ...value
   } = profile && typeof profile === 'object' ? profile : {};
   const privacy = value.privacy && typeof value.privacy === 'object' ? value.privacy : {};
+  const strictPrivacy = privacy.strict !== false;
   const advanced = value.advanced && typeof value.advanced === 'object' ? value.advanced : {};
   const proxyMeta = value.proxyMeta && typeof value.proxyMeta === 'object' ? value.proxyMeta : {};
   const platform = value.platform && typeof value.platform === 'object' ? value.platform : {};
@@ -424,6 +425,7 @@ function normalizeProfileSettings(profile) {
     ? 'direct'
     : requestedNetworkMode === 'system' || /^system$/i.test(rawProxy)
       ? 'system'
+      : requestedNetworkMode === 'proxy' ? 'proxy'
       : legacyDemoProxy || !rawProxy || /^(direct|offline|none)$/i.test(rawProxy)
       ? 'direct'
       : 'proxy';
@@ -456,20 +458,20 @@ function normalizeProfileSettings(profile) {
       libraryProxyId: String(proxyMeta.libraryProxyId || ''),
       ipChannel: String(proxyMeta.ipChannel || 'ip-api'),
       refreshUrl: String(proxyMeta.refreshUrl || ''),
-      checkOnStart: Boolean(proxyMeta.checkOnStart),
+      checkOnStart: strictPrivacy || Boolean(proxyMeta.checkOnStart),
       refreshOnStart: Boolean(proxyMeta.refreshOnStart),
       systemProxy: String(proxyMeta.systemProxy || 'global'),
       frontProxyMode: proxyMeta.frontProxyMode === 'system' ? 'system' : 'none',
       frontProxyHandledByLibrary: Boolean(proxyMeta.frontProxyHandledByLibrary),
-      directBypass: Boolean(proxyMeta.directBypass),
+      directBypass: !strictPrivacy && Boolean(proxyMeta.directBypass),
       bypassList: String(proxyMeta.bypassList || ''),
       apiExtractUrl: String(proxyMeta.apiExtractUrl || ''),
       backupProxies: Array.isArray(proxyMeta.backupProxies)
         ? proxyMeta.backupProxies.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
         : String(proxyMeta.backupProxies || '').split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, 8),
       fillFingerprint: proxyMeta.fillFingerprint !== false,
-      requireReady: proxyMeta.requireReady !== false,
-      notReadyPolicy: ['block', 'direct', 'continue'].includes(String(proxyMeta.notReadyPolicy || ''))
+      requireReady: strictPrivacy || proxyMeta.requireReady !== false,
+      notReadyPolicy: strictPrivacy ? 'block' : ['block', 'direct', 'continue'].includes(String(proxyMeta.notReadyPolicy || ''))
         ? String(proxyMeta.notReadyPolicy)
         : (proxyMeta.requireReady === false ? 'continue' : 'block'),
       tlsProfile: ['auto', 'chrome', 'chrome_legacy', 'node', 'off'].includes(String(proxyMeta.tlsProfile || ''))
@@ -481,16 +483,17 @@ function normalizeProfileSettings(profile) {
       })(),
     },
     privacy: {
+      strict: strictPrivacy,
       fingerprintMode: privacy.fingerprintMode === 'native' ? 'native' : 'custom',
-      webrtc: String(privacy.webrtc || 'proxy'),
-      timezoneMode: String(privacy.timezoneMode || 'ip'),
+      webrtc: strictPrivacy ? 'disabled' : String(privacy.webrtc || 'proxy'),
+      timezoneMode: strictPrivacy && privacy.timezoneMode !== 'custom' ? 'ip' : String(privacy.timezoneMode || 'ip'),
       timezone: String(privacy.timezone || ''),
-      geoMode: String(privacy.geoMode || 'ip'),
+      geoMode: strictPrivacy ? 'disabled' : String(privacy.geoMode || 'ip'),
       latitude: privacy.latitude ?? '',
       longitude: privacy.longitude ?? '',
       accuracy: Number(privacy.accuracy) || 100,
       uiLanguage: String(privacy.uiLanguage || 'profile'),
-      languageMode: String(privacy.languageMode || (privacy.langFromIp !== false ? 'ip' : (privacy.uiLanguage && privacy.uiLanguage !== 'profile' ? privacy.uiLanguage : 'ip'))),
+      languageMode: strictPrivacy && privacy.languageMode === 'system' ? 'ip' : String(privacy.languageMode || (privacy.langFromIp !== false ? 'ip' : (privacy.uiLanguage && privacy.uiLanguage !== 'profile' ? privacy.uiLanguage : 'ip'))),
       langFromIp: privacy.langFromIp !== false,
       timezoneFromIp: privacy.timezoneFromIp !== false,
       geoFromIp: privacy.geoFromIp !== false,
@@ -1699,6 +1702,7 @@ function editorDraft(strict = true) {
   const tabMode = document.querySelector('input[name="editor-tab-mode"]:checked')?.value || 'fixed';
   const dntMode = $('#editor-dnt-mode')?.value || 'default';
   const privacy = {
+    strict: $('#editor-strict-privacy')?.checked !== false,
     fingerprintMode: $('#editor-fingerprint-mode')?.value === 'native' ? 'native' : 'custom',
     webrtc: $('#editor-webrtc')?.value || 'proxy',
     timezoneMode: $('#editor-timezone-mode')?.value || 'ip',
@@ -1913,7 +1917,27 @@ function editorDraft(strict = true) {
   });
 }
 
+function syncStrictPrivacyControls() {
+  const strict = $('#editor-strict-privacy')?.checked !== false;
+  for (const [selector, value] of [['#editor-proxy-check-start', true], ['#editor-proxy-require-ready', true], ['#editor-direct-bypass', false], ['#editor-proxy-refresh-start', false]]) {
+    const field = $(selector); if (!field) continue;
+    field.disabled = strict; if (strict) field.checked = value;
+  }
+  for (const [selector, value] of [['#editor-webrtc', 'disabled'], ['#editor-geo-mode', 'disabled'], ['#editor-proxy-not-ready-policy', 'block']]) {
+    const field = $(selector); if (!field) continue;
+    field.disabled = strict; if (strict) field.value = value;
+  }
+  const timezone = $('#editor-timezone-mode');
+  if (timezone) { const real = timezone.querySelector('option[value="real"]'); if (real) real.disabled = strict; if (strict && timezone.value === 'real') timezone.value = 'ip'; }
+  const language = $('#editor-language-mode');
+  if (language) { const system = language.querySelector('option[value="system"]'); if (system) system.disabled = strict; if (strict && language.value === 'system') language.value = 'ip'; }
+  const direct = document.querySelector('input[name="editor-network"][value="direct"]');
+  if (direct) direct.disabled = strict;
+  if (strict && direct?.checked) { const system = document.querySelector('input[name="editor-network"][value="system"]'); if (system) system.checked = true; }
+}
+
 function updateEditorVisibility() {
+  syncStrictPrivacyControls();
   const native = $('#editor-fingerprint-mode')?.value === 'native';
   const controls = $('#editor-fingerprint-controls');
   if (controls) controls.disabled = native;
@@ -1942,6 +1966,7 @@ function renderEditorSummary() {
   };
   const values = [
     [tx('浏览器'), draft.kernel === 'firefox-reverse' ? 'Firefox-Reverse' : 'Chromium'], [tx('分组'), groupNameOf(draft)],
+    ['严格隐私', privacy.strict ? '开启 · 保护未就绪禁止联网' : '关闭 · 不保证阻止本机网络回退'],
     [tx('指纹模式'), privacy.fingerprintMode === 'native' ? tx('Google 默认（原生）') : tx('自定义指纹')],
     ['User-Agent', draft.kernel === 'firefox-reverse' ? tx('由 Firefox-Reverse 内核管理') : (privacy.fingerprintMode === 'native' ? tx('浏览器原生') : (draft.userAgent || tx('按环境自动生成')))], [tx('网络'), maskProxy(draft.proxy)], ['WebRTC', labels.webrtc[privacy.webrtc]],
     [tx('时区'), labels.timezoneMode[privacy.timezoneMode]], [tx('地理位置'), labels.geoMode[privacy.geoMode]], [tx('语言'), draft.language], [tx('界面语言'), privacy.uiLanguage === 'profile' ? '跟随语言' : privacy.uiLanguage],
@@ -2053,6 +2078,7 @@ function openProfileEditor(id) {
     $('#editor-proxy-result').textContent = profile.exitIp ? tx('上次出口：') + profile.exitIp + ' · ' + countryName(profile.exitCountryCode) : tx('尚未检测');
   }
   const privacy = profile.privacy;
+  editorCheck('#editor-strict-privacy', privacy.strict !== false);
   editorSet('#editor-fingerprint-mode', privacy.fingerprintMode === 'native' ? 'native' : 'custom');
   if ($('#editor-fingerprint-mode')) delete $('#editor-fingerprint-mode').dataset.resetOverrides;
   editorSet('#editor-webrtc', privacy.webrtc);
@@ -4389,6 +4415,14 @@ function syncEditorKernelUi() {
 }
 
 $('#editor-kernel')?.addEventListener('change', syncEditorKernelUi);
+$('#editor-strict-privacy')?.addEventListener('change', () => { updateEditorVisibility(); renderEditorSummary(); });
+$('#editor-install-network-protection')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget; const status = $('#editor-network-protection-status');
+  button.disabled = true; status.textContent = '正在安装并校验，Windows 可能请求管理员授权…';
+  try { await window.ops.installPrivacyFirewall(); status.textContent = '内核出站保护已就绪：仅允许本机隐私网关。更换或更新内核后需重新校验。'; }
+  catch (error) { status.textContent = '保护未就绪：' + error.message; }
+  finally { button.disabled = false; }
+});
 
 // Same tradeoff, stated at creation time so the choice is informed.
 $('#profile-create-kernel')?.addEventListener('change', (event) => {

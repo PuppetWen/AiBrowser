@@ -12,7 +12,7 @@ const { resolveProfileLanguage, localeFromCountryCode } = require('./automation/
 const { mergeLoadExtensionArgs } = require('./automation/protocol/app-center-protocol');
 const { prepareMarkerExtension, prepareMacDockWrapper, normalizeEnvNumber } = require('./automation/env-icon');
 const { toFileUrl, killProcessTree } = require('./automation/protocol/cross-platform');
-const { buildFingerprint, buildWorkerInjectionScript, chromeArgsForFingerprint, applyFingerprintToTab, isNativeFingerprintProfile } = require('./automation/fingerprint');
+const { buildFingerprint, buildWorkerInjectionScript, chromeArgsForFingerprint, applyFingerprintToTab, isNativeFingerprintProfile, fingerprintVerificationExpression } = require('./automation/fingerprint');
 const { acquireProfileLock, releaseProfileLock, isPidAlive, auditIsolation, isSystemBrowserExecutable, isPathInsideOrEqual, validateDataRootIsolationSecure, validateProfileRootSecure, assertProfileId, assertSafeProfileChild } = require('./automation/isolation');
 const { BrowserKernelManager, ensureKernelReadyForLaunch } = require('./automation/browser-kernel');
 const { ensureStartPageServer, getStartPageServer } = require('./automation/start-page-server');
@@ -25,6 +25,9 @@ const {
 const { fpLog, summarizeFp, LIVE_PROBE_EXPRESSION, logPath: fingerprintLogPath } = require('./automation/fingerprint-debug-log');
 const { rebasePortablePath, rebasePortableFileUrl } = require('./portable-paths');
 const { clearFirefoxSessionCookies } = require('./automation/firefox-sessionstore');
+const { isStrictPrivacy, protectionError, assertStrictProfile, assertExitIdentity, strictChromeArgs } = require('./automation/privacy-policy');
+const { startPrivacyGateway } = require('./automation/privacy-gateway');
+const { privacyFirewall } = require('./automation/privacy-firewall');
 
 const KERNEL_POLICY_VERSION = 4;
 
@@ -412,6 +415,7 @@ class BrowserEngine {
     if (!value || typeof value !== 'object' || typeof value.id !== 'string' || typeof value.name !== 'string') throw new Error('Invalid profile');
     const id = assertProfileId(value.id);
     const privacyValue = value.privacy && typeof value.privacy === 'object' ? value.privacy : {};
+    const strictPrivacy = privacyValue.strict !== false;
     const advancedValue = value.advanced && typeof value.advanced === 'object' ? value.advanced : {};
     const proxyMetaValue = value.proxyMeta && typeof value.proxyMeta === 'object' ? value.proxyMeta : {};
     const platformValue = value.platform && typeof value.platform === 'object' ? value.platform : {};
@@ -438,6 +442,7 @@ class BrowserEngine {
       ? 'direct'
       : requestedNetworkMode === 'system' || /^system$/i.test(rawProxy)
         ? 'system'
+        : requestedNetworkMode === 'proxy' ? 'proxy'
         : !rawProxy || /^(direct|offline|none)$/i.test(rawProxy)
         ? 'direct'
         : 'proxy';
@@ -475,12 +480,12 @@ class BrowserEngine {
         libraryProxyId: String(proxyMetaValue.libraryProxyId || '').slice(0, 100),
         ipChannel: allowed(proxyMetaValue.ipChannel, ['ip-api', 'ip2location'], 'ip-api'),
         refreshUrl: String(proxyMetaValue.refreshUrl || '').slice(0, 1000),
-        checkOnStart: Boolean(proxyMetaValue.checkOnStart),
+        checkOnStart: strictPrivacy || Boolean(proxyMetaValue.checkOnStart),
         refreshOnStart: Boolean(proxyMetaValue.refreshOnStart),
         systemProxy: allowed(proxyMetaValue.systemProxy, ['global', 'use', 'off'], 'global'),
         frontProxyMode: allowed(proxyMetaValue.frontProxyMode, ['none', 'system'], 'none'),
         frontProxyHandledByLibrary: Boolean(proxyMetaValue.frontProxyHandledByLibrary),
-        directBypass: Boolean(proxyMetaValue.directBypass),
+        directBypass: !strictPrivacy && Boolean(proxyMetaValue.directBypass),
         bypassList: String(proxyMetaValue.bypassList || '').slice(0, 4000),
         apiExtractUrl: String(proxyMetaValue.apiExtractUrl || '').slice(0, 2000),
         backupProxies: Array.isArray(proxyMetaValue.backupProxies)
@@ -489,8 +494,8 @@ class BrowserEngine {
             ? String(proxyMetaValue.backupProxies).split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, 8)
             : []),
         fillFingerprint: proxyMetaValue.fillFingerprint !== false,
-        requireReady: proxyMetaValue.requireReady !== false,
-        notReadyPolicy: allowed(proxyMetaValue.notReadyPolicy, ['block', 'direct', 'continue'], proxyMetaValue.requireReady === false ? 'continue' : 'block'),
+        requireReady: strictPrivacy || proxyMetaValue.requireReady !== false,
+        notReadyPolicy: strictPrivacy ? 'block' : allowed(proxyMetaValue.notReadyPolicy, ['block', 'direct', 'continue'], proxyMetaValue.requireReady === false ? 'continue' : 'block'),
         tlsProfile: allowed(proxyMetaValue.tlsProfile, ['auto', 'chrome', 'chrome_legacy', 'node', 'off'], 'auto'),
         tlsChromeMajor: (() => {
           const n = Number(proxyMetaValue.tlsChromeMajor);
@@ -498,17 +503,18 @@ class BrowserEngine {
         })(),
       },
       privacy: {
+        strict: strictPrivacy,
         fingerprintMode: allowed(privacyValue.fingerprintMode, ['custom', 'native'], 'custom'),
-        webrtc: allowed(privacyValue.webrtc, ['proxy', 'disabled', 'real'], 'proxy'),
-        timezoneMode: allowed(privacyValue.timezoneMode, ['ip', 'real', 'custom'], 'ip'),
+        webrtc: strictPrivacy ? 'disabled' : allowed(privacyValue.webrtc, ['proxy', 'disabled', 'real'], 'proxy'),
+        timezoneMode: strictPrivacy && privacyValue.timezoneMode !== 'custom' ? 'ip' : allowed(privacyValue.timezoneMode, ['ip', 'real', 'custom'], 'ip'),
         timezone: String(privacyValue.timezone || '').slice(0, 100),
-        geoMode: allowed(privacyValue.geoMode, ['ip', 'disabled', 'custom', 'prompt', 'allow'], privacyValue.geoMode === 'prompt' ? 'prompt' : (privacyValue.geoMode === 'allow' ? 'ip' : 'ip')),
+        geoMode: strictPrivacy ? 'disabled' : allowed(privacyValue.geoMode, ['ip', 'disabled', 'custom', 'prompt', 'allow'], privacyValue.geoMode === 'prompt' ? 'prompt' : (privacyValue.geoMode === 'allow' ? 'ip' : 'ip')),
         latitude: finite(privacyValue.latitude),
         longitude: finite(privacyValue.longitude),
         accuracy: Math.min(100000, Math.max(1, Number(privacyValue.accuracy) || 100)),
         uiLanguage: String(privacyValue.uiLanguage || 'profile').slice(0, 20),
         langFromIp: privacyValue.langFromIp !== false,
-        languageMode: String(privacyValue.languageMode || (privacyValue.langFromIp !== false ? 'ip' : (privacyValue.uiLanguage || 'profile'))).slice(0, 20),
+        languageMode: strictPrivacy && privacyValue.languageMode === 'system' ? 'ip' : String(privacyValue.languageMode || (privacyValue.langFromIp !== false ? 'ip' : (privacyValue.uiLanguage || 'profile'))).slice(0, 20),
         timezoneFromIp: privacyValue.timezoneFromIp !== false,
         geoFromIp: privacyValue.geoFromIp !== false,
         fontMode: allowed(privacyValue.fontMode, ['default', 'custom'], 'default'),
@@ -533,7 +539,7 @@ class BrowserEngine {
           dischargingTime: Number.isFinite(Number(privacyValue.batterySnapshot.dischargingTime)) ? Number(privacyValue.batterySnapshot.dischargingTime) : null,
         } : null,
         // Derived from webrtc mode only; independent numeric override removed to avoid dual controls.
-        webrtcPolicy: privacyValue.webrtc === 'disabled' ? 0 : (privacyValue.webrtc === 'real' ? 1 : 3),
+        webrtcPolicy: strictPrivacy || privacyValue.webrtc === 'disabled' ? 0 : (privacyValue.webrtc === 'real' ? 1 : 3),
         stabilityMode: allowed(privacyValue.stabilityMode, ['off', 'auto', 'force'], 'auto'),
         stabilityHamming: Math.min(64, Math.max(1, Number(privacyValue.stabilityHamming) || 12)),
         stabilityMaxWidth: Math.min(4096, Math.max(64, Number(privacyValue.stabilityMaxWidth) || 600)),
@@ -797,6 +803,16 @@ class BrowserEngine {
   async startProfileProxyForwarder(profile, targetConfig, onStatus = () => {}) {
     if (!targetConfig) return null;
     const front = await this.resolveProfileFrontProxy(profile, targetConfig);
+    if (isStrictPrivacy(profile)) {
+      return startPrivacyGateway(targetConfig, {
+        frontConfig: front?.config,
+        onBlocked: (message) => {
+          onStatus({ code: 'PRIVACY_NETWORK_BLOCKED', message });
+          const item = this.running.get(profile.id);
+          if (item && !item.stopping) this.abortFingerprintProtection(item, protectionError(message)).catch(() => {});
+        },
+      });
+    }
     if (front) {
       const bridge = await startChainedProxy(targetConfig, front.config, onStatus);
       bridge.frontProxy = { source: front.source, protocol: front.config.protocol };
@@ -937,9 +953,20 @@ class BrowserEngine {
     // 「完全禁用弹窗拦截」= 允许弹窗 (ALLOW=1)，不是屏蔽弹窗 (BLOCK=2)
     if (profile.advanced.blockPopups) content.popups = 1; else delete content.popups;
     if (!nativeFingerprint && profile.privacy.media === 'blocked') { content.media_stream_mic = 2; content.media_stream_camera = 2; } else { delete content.media_stream_mic; delete content.media_stream_camera; }
-    if (!nativeFingerprint && profile.privacy.geoMode === 'disabled') content.geolocation = 2;
+    if (isStrictPrivacy(profile) || profile.privacy.geoMode === 'disabled') content.geolocation = 2;
     else if (!nativeFingerprint && profile.privacy.geoMode === 'prompt') content.geolocation = 3;
     else delete content.geolocation;
+    if (isStrictPrivacy(profile) || profile.privacy.geoMode === 'disabled') {
+      prefs.profile.content_settings ||= {};
+      prefs.profile.content_settings.exceptions ||= {};
+      delete prefs.profile.content_settings.exceptions.geolocation;
+    }
+    if (isStrictPrivacy(profile)) {
+      prefs.webrtc = { ...(prefs.webrtc || {}), ip_handling_policy: 'disable_non_proxied_udp' };
+      prefs.dns_over_https = { mode: 'off' };
+      prefs.net = { ...(prefs.net || {}), network_prediction_options: 2 };
+      prefs.session = { ...(prefs.session || {}), restore_on_startup: 5, startup_urls: [] };
+    }
     const allowPasswords = Boolean(profile.advanced.savePasswords) && !profile.advanced.blockPasswordPrompt;
     prefs.credentials_enable_service = allowPasswords;
     prefs.profile.password_manager_enabled = allowPasswords;
@@ -1231,6 +1258,9 @@ class BrowserEngine {
   }
 
   async abortFingerprintProtection(item, error) {
+    // Close the network synchronously, before any asynchronous CDP/process work.
+    item.stopping = true;
+    item.proxyForwarder?.block?.(error.message);
     if (item.fingerprintAbortPromise) return item.fingerprintAbortPromise;
     item.cdpError = error.message;
     item.fingerprintStartupError = error;
@@ -1276,9 +1306,10 @@ class BrowserEngine {
       if (event.method !== 'Target.attachedToTarget') return;
       const { sessionId, targetInfo = {}, waitingForDebugger } = event.params || {};
       if (!sessionId) return;
-      (async () => {
+      const task = (async () => {
         let safeToResume = true;
         try {
+          if (isStrictPrivacy(item.profile) && item.stopping) throw protectionError('隐私保护已停止');
           if (targetInfo.type === 'page' || targetInfo.type === 'iframe') {
             // Nested attach so workers/iframes under this page also pause for inject.
             await connection.command('Target.setAutoAttach', {
@@ -1290,10 +1321,25 @@ class BrowserEngine {
             // Polling in startRunningWatch is only a fallback, not the primary path.
             await this.applyFingerprintToSession(connection, sessionId, item, fingerprint, targetInfo);
           } else if (workerTypes.has(targetInfo.type) && !internalUrl.test(String(targetInfo.url || ''))) {
-            await connection.command('Runtime.evaluate', { expression: source }, { sessionId, timeout: 10000 });
+            if (isStrictPrivacy(item.profile)) await connection.command('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, { sessionId });
+            if (isStrictPrivacy(item.profile)) {
+              const timezoneId = item.profile.privacy.timezoneMode === 'custom' ? item.profile.privacy.timezone : item.profile.exitTimezone;
+              // Some worker implementations inherit the renderer timezone and do
+              // not expose Emulation. Readback below is required in either case.
+              await connection.command('Emulation.setTimezoneOverride', { timezoneId }, { sessionId }).catch(() => {});
+            }
+            const result = await connection.command('Runtime.evaluate', { expression: source }, { sessionId, timeout: 10000 });
+            if (result?.exceptionDetails) throw protectionError('Worker 指纹脚本执行失败');
+            if (isStrictPrivacy(item.profile)) {
+              const result = await connection.command('Runtime.evaluate', { expression: fingerprintVerificationExpression(fingerprint, item.profile, true), returnByValue: true }, { sessionId });
+              if (result?.exceptionDetails || !Array.isArray(result?.result?.value) || result.result.value.length) throw protectionError('Worker 指纹读回失败');
+            }
           }
         } catch (error) {
-          if (error.documentStartOk === false) {
+          if (isStrictPrivacy(item.profile)) {
+            safeToResume = false;
+            await this.abortFingerprintProtection(item, protectionError(error.message, error));
+          } else if (error.documentStartOk === false) {
             safeToResume = false;
             if (item.fingerprintStartupComplete !== true) item.fingerprintStartupError = error;
             try {
@@ -1312,14 +1358,22 @@ class BrowserEngine {
             message: error.message,
           });
         } finally {
-          if (waitingForDebugger && safeToResume) {
+          if (waitingForDebugger && safeToResume && !item.stopping) {
             await connection.command('Runtime.runIfWaitingForDebugger', {}, { sessionId })
-              .catch((error) => report(error, targetInfo));
+              .catch(async (error) => { report(error, targetInfo); if (isStrictPrivacy(item.profile)) await this.abortFingerprintProtection(item, protectionError(error.message, error)); });
           }
         }
       })();
+      item.fingerprintTasks ||= new Set();
+      item.fingerprintTasks.add(task);
+      task.catch((error) => report(error, targetInfo)).finally(() => item.fingerprintTasks.delete(task));
     };
-    const connection = await cdp.connect(browserWs, { onEvent: onAttached, timeout: 8000 });
+    const connection = await cdp.connect(browserWs, {
+      onEvent: onAttached, timeout: 8000,
+      onDisconnect: (error) => {
+        if (isStrictPrivacy(item.profile) && !item.stopping && !item.cleanedUp) this.abortFingerprintProtection(item, protectionError('指纹控制连接断开', error)).catch(() => {});
+      },
+    });
     try {
       await connection.command('Target.setDiscoverTargets', { discover: true });
       await connection.command('Target.setAutoAttach', {
@@ -1838,6 +1892,11 @@ class BrowserEngine {
     const tick = async () => {
       item.watchTimer = null;
       if (item.cleanedUp || item.stopping || !this.running.has(profileId)) return;
+      if (isStrictPrivacy(item.profile) && Date.now() - (item.firewallCheckedAt || 0) > 30000) {
+        try { await privacyFirewall(item.browser); item.firewallCheckedAt = Date.now(); }
+        catch (error) { await this.abortFingerprintProtection(item, protectionError(error.message, error)); return; }
+        if (item.cleanedUp || item.stopping) return;
+      }
       let pageCount = -1;
       let cdpAlive = false;
       let processAlive = true;
@@ -1859,6 +1918,10 @@ class BrowserEngine {
       }
 
       if (!processAlive || !cdpAlive) {
+        if (isStrictPrivacy(item.profile)) {
+          await this.abortFingerprintProtection(item, protectionError('浏览器控制连接不可用，网络已关闭'));
+          return;
+        }
         item.watchDeadTicks = (item.watchDeadTicks || 0) + 1;
         item.watchEmptyTicks = 0;
         // pid gone: stop immediately; CDP flaky: need 2 consecutive fails
@@ -1893,6 +1956,7 @@ class BrowserEngine {
               trackOn: item,
               phase: 'watch-ensure',
             }).catch((error) => {
+              if (isStrictPrivacy(item.profile)) return this.abortFingerprintProtection(item, error);
               item.cdpError = `fingerprint injection failed: ${error.message}`;
               this.emit({
                 type: 'fingerprint-injection-failed',
@@ -2009,6 +2073,7 @@ class BrowserEngine {
    * The kernel supplies its own agent and environment manager.
    */
   async startExternalKernel(profile) {
+    assertStrictProfile(profile);
     const externalKernel = require('./automation/external-kernel');
     const root = this.profileRoot(profile.id);
     const rootCheck = await validateProfileRootSecure(this.profileDataRootPath, root, profile.id, { create: true });
@@ -2090,6 +2155,7 @@ class BrowserEngine {
         url: this.startPageUrl ? this.startPageUrl(profile) : undefined,
         proxy: profile.networkMode === 'direct' ? '' : (proxyForwarder?.url || profile.proxy),
         networkMode: profile.networkMode,
+        privacy: profile.privacy,
         env: await localizedBrowserEnvironment(root),
       });
       launched.launcherPid ||= launched.child.pid || launched.pid;
@@ -2192,11 +2258,17 @@ class BrowserEngine {
   async startProfile(raw) {
     // let: language/timezone resolution reassigns profile via applyResolvedLocale
     let profile = this.sanitizeProfile(raw); this.profiles.set(profile.id, profile);
+    const configuredNetwork = isStrictPrivacy(profile) ? { networkMode: profile.networkMode, proxy: profile.proxy } : {};
     if (this.running.has(profile.id)) {
       if (!profile.advanced.multiOpen) return this.publicRunning(profile.id);
       return this.publicRunning(profile.id);
     }
     this.emitStartProgress(profile.id, 'prepare', 6, '正在准备环境…');
+    try { assertStrictProfile(profile); }
+    catch (error) {
+      this.emit({ type: 'profile-start-progress', id: profile.id, phase: 'error', percent: 0, message: error.message, starting: false, running: false, error: true });
+      throw error;
+    }
     // External kernels take a completely different path: no CDP, no fingerprint
     // injection, no extension. Branch before any of that work is done.
     if (profile.kernel === 'firefox-reverse') return this.startExternalKernel(profile);
@@ -2214,10 +2286,10 @@ class BrowserEngine {
         checksExitBeforeLaunch ? '正在检测代理与出口…' : '正在应用网络配置…',
       );
       profile = await this.prepareProfileProxyForStart(profile);
-    this.profiles.set(profile.id, profile);
-    await this.ensureExitNetworkForLocale(profile).catch(() => {});
+    this.profiles.set(profile.id, { ...profile, ...configuredNetwork });
+    await this.ensureExitNetworkForLocale(profile).catch((error) => { if (isStrictPrivacy(profile)) throw error; });
     profile = this.applyResolvedLocale(profile);
-    this.profiles.set(profile.id, profile);
+    this.profiles.set(profile.id, { ...profile, ...configuredNetwork });
     const extensions = this.assignedExtensions(profile.id);
     this.emitStartProgress(profile.id, 'kernel', 30, '正在准备浏览器内核…');
     if (!this.kernelStatus().installed && this.preferIndependentKernel) {
@@ -2225,6 +2297,7 @@ class BrowserEngine {
       await this.ensureKernelBootstrap();
     }
     const browser = this.chooseBrowser(profile);
+    if (isStrictPrivacy(profile)) await privacyFirewall(browser);
     const root = this.profileRoot(profile.id);
     const rootCheck = await validateProfileRootSecure(this.profileDataRootPath, root, profile.id, { create: true });
     if (!rootCheck.ok) throw new Error('Isolation error: ' + rootCheck.message);
@@ -2331,7 +2404,7 @@ class BrowserEngine {
           message: '内核 init 指纹同步失败：' + error.message,
         });
         // Never start native mode with a previous custom identity still on disk.
-        if (nativeFingerprint) throw error;
+        if (nativeFingerprint || isStrictPrivacy(profile)) throw error;
       }
     }
     if (!profile.advanced.allowSignin) args.push('--disable-sync');
@@ -2347,10 +2420,15 @@ class BrowserEngine {
     let proxy = profile.networkMode === 'proxy'
       ? (proxyForwarder ? proxyForwarder.url : this.proxyArg(profile.proxy))
       : (profile.networkMode === 'direct' ? 'direct://' : null);
+    if (isStrictPrivacy(profile) && !proxy) throw protectionError('固定代理未就绪，已阻止启动');
     if (proxy) {
       args.push(`--proxy-server=${proxy}`);
       // 本机启动页必须直连，不走代理；可叠加用户直连白名单
-      let bypass = '<-loopback>;127.0.0.1;localhost';
+      let bypass = isStrictPrivacy(profile) ? '<-loopback>' : '<-loopback>;127.0.0.1;localhost';
+      if (isStrictPrivacy(profile) && infoStartUrl) {
+        const localStart = new URL(infoStartUrl);
+        if (localStart.hostname === '127.0.0.1' && localStart.port) bypass += `;127.0.0.1:${localStart.port}`;
+      }
       if (profile.proxyMeta?.directBypass && profile.proxyMeta.bypassList) {
         const extra = String(profile.proxyMeta.bypassList).split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
         if (extra.length) bypass += ';' + extra.join(';');
@@ -2365,7 +2443,10 @@ class BrowserEngine {
     if (!restoreSession) {
       if (startUrl) args.push('about:blank');
       else if (customStartUrls.length) args.push('about:blank');
-      for (const extra of customStartUrls.slice(1)) args.push(extra);
+    }
+    if (isStrictPrivacy(profile)) {
+      for (const flag of strictChromeArgs()) if (!args.some((arg) => arg.split('=')[0] === flag.split('=')[0])) args.push(flag);
+      disabledFeatures.push('DnsOverHttps', 'WebTransport', 'MediaRouter');
     }
     if (proxyConfig) {
       args.push('--disable-background-networking', '--disable-component-update', '--disable-default-apps', '--disable-client-side-phishing-detection', '--disable-domain-reliability', '--disable-quic', '--dns-prefetch-disable', '--no-pings', '--metrics-recording-only');
@@ -2418,7 +2499,7 @@ class BrowserEngine {
           userDataPath: this.app.getPath('userData'),
           realBinary: browser.path,
         });
-        if (dockBin && fs.existsSync(dockBin)) launchBinary = dockBin;
+        if (!isStrictPrivacy(profile) && dockBin && fs.existsSync(dockBin)) launchBinary = dockBin;
       }
     } catch (error) {
       this.emit({ type: 'sync-error', action: 'env-dock-icon', id: profile.id, message: error.message });
@@ -2593,7 +2674,7 @@ class BrowserEngine {
           phase: 'pre-startpage',
         }) || fingerprint;
       } catch (preInjectError) {
-        if (preInjectError.documentStartOk === false) throw preInjectError;
+        if (preInjectError.documentStartOk === false || isStrictPrivacy(profile)) throw preInjectError;
         item.fingerprint = fingerprint;
         await fpLog('start.pre-inject-fail', {
           profileId: profile.id,
@@ -2620,12 +2701,18 @@ class BrowserEngine {
         };
       }
       await this.startWorkerFingerprintInjection(item, injectFp).catch(async (error) => {
-        if (error.documentStartOk === false) throw error;
+        if (error.documentStartOk === false || isStrictPrivacy(profile)) throw error;
         item.workerFingerprintError = error.message;
         await fpLog('worker.inject-fail', { profileId: profile.id, error: String(error.message || error) });
         this.emit({ type: 'worker-fingerprint-injection-failed', id: profile.id, message: error.message });
       });
       if (item.fingerprintStartupError) throw item.fingerprintStartupError;
+      if (isStrictPrivacy(profile)) {
+        await connection.command('Browser.setPermission', { permission: { name: 'geolocation' }, setting: 'denied' });
+        await Promise.all([...(item.fingerprintTasks || [])]);
+        if (item.fingerprintStartupError || item.stopping) throw item.fingerprintStartupError || protectionError('指纹初始化失败');
+        item.proxyForwarder.open();
+      }
       // Open the start page after successful document-start registration.
       if (!restoreSession && startUrl) {
         await fpLog('start.navigate-startpage', { profileId: profile.id, startUrl });
@@ -2637,7 +2724,7 @@ class BrowserEngine {
         try {
           await this.ensureStartPageFingerprint(item, profile, injectFp, startUrl);
         } catch (reInjectError) {
-          if (reInjectError.documentStartOk === false) throw reInjectError;
+          if (reInjectError.documentStartOk === false || isStrictPrivacy(profile)) throw reInjectError;
           await fpLog('start.reinject-fail', { profileId: profile.id, error: String(reInjectError.message || reInjectError) });
           this.emit({
             type: 'fingerprint-injection-failed',
@@ -2645,6 +2732,12 @@ class BrowserEngine {
             message: 'start-page re-inject: ' + reInjectError.message,
           });
         }
+      }
+      for (const url of customStartUrls.slice(1)) {
+        const tab = await cdp.newTab(item.port, 'about:blank');
+        await applyFingerprintToTab(cdp.call, tab.webSocketDebuggerUrl, injectFp, profile);
+        if (item.stopping) throw item.fingerprintStartupError || protectionError('环境保护已停止');
+        await cdp.call(tab.webSocketDebuggerUrl, 'Page.navigate', { url });
       }
       // Brand window title as 环境 N (not generic Chrome)
       await this.applyEnvWindowTitle(item.port, profile).catch(() => {});
@@ -2656,10 +2749,10 @@ class BrowserEngine {
     } catch (error) {
       item.cdpError = error.message;
       await fpLog('start.fail', { profileId: profile.id, error: String(error.message || error) });
-      const protectionError = error.documentStartOk === false ? error : item.fingerprintStartupError;
-      if (protectionError) {
-        await this.abortFingerprintProtection(item, protectionError);
-        throw protectionError;
+      const fatal = error.documentStartOk === false || isStrictPrivacy(profile) ? error : item.fingerprintStartupError;
+      if (fatal) {
+        await this.abortFingerprintProtection(item, fatal);
+        throw fatal;
       }
       // Last chance: still try to open start page so UI is not stuck on about:blank.
       if (!restoreSession && startUrl && item.port) {
@@ -2765,6 +2858,7 @@ class BrowserEngine {
     }
 
     item.stopping = true;
+    item.proxyForwarder?.block?.('环境正在关闭');
     this.clearRunningWatch(item);
     item.workerFingerprintConnection?.close();
     item.workerFingerprintConnection = null;
@@ -2854,6 +2948,7 @@ class BrowserEngine {
 
   async resolveProfileProxyConfig(profile, { allowExtract = true } = {}) {
     const working = this.sanitizeProfile(profile);
+    if (isStrictPrivacy(working) && working.proxyMeta?.apiExtractUrl) throw protectionError('严格隐私模式禁止宿主直连提取代理');
     let lastError = null;
     const candidates = [];
     const pushCandidate = (value, source) => {
@@ -2962,7 +3057,7 @@ class BrowserEngine {
     }
     let frontBridge = null;
     try {
-      const front = await this.resolveProfileFrontProxy(profile, resolved.config);
+      const front = options.skipFrontProxy ? null : await this.resolveProfileFrontProxy(profile, resolved.config);
       const lookupConfig = front
         ? parseProxy((frontBridge = await startChainedProxy(resolved.config, front.config)).url)
         : resolved.config;
@@ -3030,6 +3125,7 @@ class BrowserEngine {
 
   async refreshProfileProxy(raw) {
     const profile = this.sanitizeProfile(raw);
+    if (isStrictPrivacy(profile)) throw protectionError('严格隐私模式禁止宿主直连刷新或提取代理，请使用已配置的固定代理。');
     const refreshUrl = String(profile.proxyMeta?.refreshUrl || '').trim();
     const extractUrl = String(profile.proxyMeta?.apiExtractUrl || '').trim();
     // refreshUrl and apiExtractUrl stay separate: refresh rotates; extract re-reads endpoint.
@@ -3065,9 +3161,41 @@ class BrowserEngine {
     };
   }
 
+  async installPrivacyFirewall() {
+    const browser = this.chooseBrowser({ kernel: 'chromium' });
+    return privacyFirewall(browser, 'Install');
+  }
+
+  async prepareStrictProfileProxyForStart(profile) {
+    assertStrictProfile(profile);
+    this.networkInfo.delete(profile.id);
+    let working = { ...profile, exitIp: '', exitTimezone: '', exitCountryCode: '', exitLatitude: null, exitLongitude: null };
+    if (working.networkMode === 'system') {
+      const system = await resolveSystemProxy();
+      if (!system.enabled || !system.raw || system.pacUrl) throw protectionError('系统代理没有可固定的端点或使用 PAC，已阻止启动。请设置 HTTP/HTTPS/SOCKS5 固定代理。');
+      working = this.sanitizeProfile({ ...working, networkMode: 'proxy', proxy: system.raw });
+    }
+    const candidates = [...new Set([working.proxy, ...(working.proxyMeta.backupProxies || [])])];
+    let lastError;
+    for (const candidate of candidates) {
+      try {
+        const config = parseProxy(candidate);
+        if (!config || !['http', 'https', 'socks5'].includes(config.protocol)) throw protectionError('严格隐私模式需要有效的 HTTP/HTTPS/SOCKS5 代理，不允许空代理、直连或 SOCKS4');
+        const network = await this.testProxy(working, { proxy: candidate, allowExtract: false });
+        assertExitIdentity(working, network);
+        working = this.sanitizeProfile({ ...working, proxy: candidate });
+        const updated = this.applyNetworkToProfile(profile, network, { persist: false }).profile;
+        return this.sanitizeProfile({ ...updated, networkMode: 'proxy', proxy: candidate });
+      } catch (error) { lastError = error; }
+    }
+    throw protectionError('严格隐私保护阻止启动：' + (lastError?.message || '没有可用代理'), lastError);
+  }
+
   async prepareProfileProxyForStart(profile) {
     let working = this.sanitizeProfile(profile);
+    if (isStrictPrivacy(working)) return this.prepareStrictProfileProxyForStart(working);
     if (working.networkMode !== 'proxy') return working;
+    if (!parseProxy(working.proxy)) throw new Error('代理模式必须填写有效代理，不能自动切换为直连');
     const meta = working.proxyMeta || {};
     const hasProxy = working.proxy && !/^(direct|offline|none)$/i.test(String(working.proxy));
     const extractUrl = String(meta.apiExtractUrl || '').trim();

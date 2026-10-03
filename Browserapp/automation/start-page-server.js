@@ -12,6 +12,7 @@ const { calculateIpHealthScore } = require('./ip-health-score');
 const { lookupDirectCountry, parseProxy, startAuthenticatedProxy } = require('../proxy-forwarder');
 const { fpLog } = require('./fingerprint-debug-log');
 const { resolveSystemProxy } = require('./system-proxy');
+const { isStrictPrivacy } = require('./privacy-policy');
 const dnsPromises = dns.promises;
 
 const SOCKET_ERROR_GUARD = Symbol('aibrowserStartPageSocketErrorGuard');
@@ -702,6 +703,7 @@ class StartPageServer {
     const session = {
       pid: profileId,
       profileId,
+      strictPrivacy: isStrictPrivacy(profile),
       id: serial,
       serial,
       number: serial,
@@ -934,6 +936,24 @@ class StartPageServer {
     if (this.engine && pid) {
       const profile = this.engine.profiles?.get?.(String(pid));
       const runningNet = this.engine.networkInfo?.get?.(String(pid));
+      const running = this.engine.running?.get?.(String(pid));
+      // A saved configuration may have changed since launch; use the live
+      // immutable gateway, never re-resolve a system or backup proxy here.
+      if (isStrictPrivacy(running?.profile) || isStrictPrivacy(profile) || session?.strictPrivacy) {
+        if (running?.proxyForwarder?.state !== 'open') throw new Error('隐私网关未放行或已断网，禁止检测');
+        if (refresh) {
+          try {
+            const network = await this.engine.testProxy({ ...running.profile, proxyMeta: { ...running.profile.proxyMeta, frontProxyMode: 'none' } }, { proxy: running.proxyForwarder.url, allowExtract: false, skipFrontProxy: true });
+            if (!runningNet?.ip || network.ip !== runningNet.ip || network.timezone !== runningNet.timezone) throw new Error('代理出口身份发生变化，请重新启动环境');
+            this.updateNetwork(pid, network);
+            return decorateNetwork(network);
+          } catch (error) {
+            running.proxyForwarder.block('出口检测失败：' + error.message);
+            throw error;
+          }
+        }
+        return decorateNetwork(runningNet || session?.network);
+      }
       if (!session && profile) {
         this.registerSession(profile, { network: runningNet || null });
         session = this.getSession(pid);
@@ -982,25 +1002,7 @@ class StartPageServer {
         return decorateNetwork(runningNet);
       }
     }
-    // 旧启动页链接可能在应用重启后失去会话。此时仍允许按当前机器直连检测，
-    // 但已知代理配置的失败必须在上面的代理分支中原样返回。
-    if (refresh && !session) {
-      try {
-        return decorateNetwork(await this.lookupDirectNetwork());
-      } catch (_) {
-        return decorateNetwork({
-          ip: '',
-          country: '',
-          countryCode: '',
-          region: '',
-          city: '',
-          timezone: '',
-          protocol: 'direct',
-          soft: true,
-          checkedAt: new Date().toISOString(),
-        });
-      }
-    }
+    if (refresh && !session) throw new Error('环境会话已失效，禁止回落到本机网络检测');
     if (session?.network) return decorateNetwork(session.network);
     if (session?.exitIp) {
       return decorateNetwork({
@@ -1149,6 +1151,9 @@ h1{margin:0 0 12px;font-size:20px}p{margin:8px 0;color:#b7becc}code{color:#93c5f
       let exitNetwork = session?.network || null;
       let proxy = '';
       const profile = this.engine?.profiles?.get?.(String(pid));
+      const running = this.engine?.running?.get?.(String(pid));
+      const strict = isStrictPrivacy(running?.profile) || isStrictPrivacy(profile) || session?.strictPrivacy;
+      if (!profile || (strict && running?.proxyForwarder?.state !== 'open')) return this.#json(res, 409, { ok: false, msg: '环境网络未就绪，禁止直连检测' });
       if (this.engine && pid) {
         exitNetwork = this.engine.networkInfo?.get?.(String(pid)) || exitNetwork;
         if (!exitNetwork) {
@@ -1159,7 +1164,8 @@ h1{margin:0 0 12px;font-size:20px}p{margin:8px 0;color:#b7becc}code{color:#93c5f
           const isDirect = profile.networkMode === 'direct'
             || !profile.proxy
             || (!isSystem && /^(direct|offline|none)$/i.test(String(profile.proxy)));
-          if (isSystem) proxy = (await resolveSystemProxy().catch(() => null))?.raw || '';
+          if (strict) proxy = running.proxyForwarder.url;
+          else if (isSystem) proxy = (await resolveSystemProxy().catch(() => null))?.raw || '';
           else if (!isDirect) proxy = String(profile.proxy || '');
         } else if (session?.networkMode === 'proxy' && session?.proxyProtocol && session.proxyProtocol !== 'direct') {
           // session alone may not hold full proxy URL; leave direct probe
@@ -1167,6 +1173,7 @@ h1{margin:0 0 12px;font-size:20px}p{margin:8px 0;color:#b7becc}code{color:#93c5f
         }
       }
       try {
+        if (!proxy && profile.networkMode !== 'direct') throw new Error('代理不可用，禁止直连检测');
         const data = await this.lookupReachability({
           proxy,
           exitNetwork: exitNetwork || {
@@ -1190,6 +1197,14 @@ h1{margin:0 0 12px;font-size:20px}p{margin:8px 0;color:#b7becc}code{color:#93c5f
     }
 
     if (pathname === '/api/dns-leak') {
+      // This legacy probe resolves random names on the HOST and therefore is
+      // not a browser DNS leak test. Never invoke it for a protected session.
+      const profile = this.engine?.profiles?.get?.(String(pid));
+      const running = this.engine?.running?.get?.(String(pid));
+      if (!profile) return this.#json(res, 409, { ok: false, msg: '环境会话已失效，禁止探测' });
+      if (isStrictPrivacy(profile) || isStrictPrivacy(running?.profile) || session?.strictPrivacy) return this.#json(res, 200, {
+        ok: true, data: { state: 'warn', label: '未执行', servers: [], detail: '为避免探测本身暴露本机网络，已停用宿主 DNS 检测。此项未通过实测验收，请在受保护浏览器内独立验证。' },
+      });
       let exitNetwork = session?.network || null;
       if (this.engine && pid) {
         exitNetwork = this.engine.networkInfo?.get?.(String(pid)) || exitNetwork;

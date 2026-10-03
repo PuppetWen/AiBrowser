@@ -18,6 +18,7 @@
  */
 
 const crypto = require('crypto');
+const { isStrictPrivacy, protectionError, validTimezone } = require('./privacy-policy');
 const {
   buildUaProfile,
   randomUaForSeed,
@@ -515,7 +516,7 @@ function buildFingerprint(profile = {}) {
   const webglMetaMode = mode('webglMeta', ['real', 'noise', 'blocked', 'custom'], privacy.webglMeta === 'real' ? 'real' : (privacy.webglMeta === 'blocked' ? 'blocked' : (privacy.webglMeta === 'custom' ? 'custom' : 'noise')));
   const audioMode = mode('audio', ['real', 'noise', 'muted'], privacy.audio === 'muted' ? 'muted' : 'noise');
   const clientRectsMode = mode('clientRects', ['real', 'noise'], 'noise');
-  const webrtcMode = mode('webrtc', ['real', 'proxy', 'disabled'], privacy.webrtc || 'proxy');
+  const webrtcMode = isStrictPrivacy(profile) ? 'disabled' : mode('webrtc', ['real', 'proxy', 'disabled'], privacy.webrtc || 'proxy');
   // Numeric shadow of webrtc mode only (not an independent control).
   const webrtcPolicy = webrtcMode === 'disabled' ? 0 : (webrtcMode === 'proxy' ? 3 : 1);
   const mediaDevicesMode = mode('mediaDevices', ['real', 'noise', 'empty'], privacy.mediaDevices === 'real' ? 'real' : (privacy.mediaDevices === 'empty' ? 'empty' : (privacy.media === 'noise' ? 'noise' : (privacy.media === 'blocked' ? 'empty' : 'noise'))));
@@ -1845,7 +1846,44 @@ function chromeArgsForFingerprint(fp, profile = {}) {
   return args;
 }
 
+function fingerprintVerificationExpression(fp, profile, worker = false) {
+  const expected = {
+    userAgent: fp.userAgent, platform: fp.platform, hardwareConcurrency: fp.hardwareConcurrency,
+    deviceMemory: fp.deviceMemory, language: fp.languages?.[0], languages: fp.languages,
+    timezone: profile.privacy?.timezoneMode === 'custom' ? profile.privacy.timezone : profile.exitTimezone,
+    webglVendor: fp.webgl?.metaMode !== 'real' ? fp.webgl?.vendor : null,
+    webglRenderer: fp.webgl?.metaMode !== 'real' ? fp.webgl?.renderer : null,
+  };
+  return `(() => {
+    const expected = ${JSON.stringify(expected)}, failed = [];
+    for (const key of ['userAgent','platform','hardwareConcurrency','deviceMemory','language']) {
+      if (expected[key] != null && navigator[key] !== expected[key]) failed.push(key);
+    }
+    if (expected.languages && JSON.stringify(Array.from(navigator.languages || [])) !== JSON.stringify(expected.languages)) failed.push('languages');
+    const canonical = value => new Intl.DateTimeFormat('en-US', { timeZone: value }).resolvedOptions().timeZone;
+    if (!expected.timezone || canonical(expected.timezone) !== Intl.DateTimeFormat().resolvedOptions().timeZone) failed.push('timezone');
+    ${worker ? '' : `if (${JSON.stringify(fp.webrtc === 'disabled')} && typeof RTCPeerConnection === 'function') {
+      try { const pc = new RTCPeerConnection({ iceServers: [] }); pc.close(); failed.push('webrtc'); }
+      catch (error) { if (error.name !== 'NotAllowedError') failed.push('webrtc'); }
+    }
+    if (expected.webglRenderer != null || expected.webglVendor != null) {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl');
+      if (gl) { gl.getExtension('WEBGL_debug_renderer_info');
+        if (expected.webglRenderer != null && gl.getParameter(0x9246) !== expected.webglRenderer) failed.push('webglRenderer');
+        if (expected.webglVendor != null && gl.getParameter(0x9245) !== expected.webglVendor) failed.push('webglVendor');
+      }
+    }`}
+    return failed;
+  })()`;
+}
+
 async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile = {}) {
+  try { return await applyFingerprintToTabImpl(cdpCall, webSocketDebuggerUrl, fp, profile); }
+  catch (error) { if (isStrictPrivacy(profile)) throw protectionError('指纹保护未就绪：' + error.message, error); throw error; }
+}
+
+async function applyFingerprintToTabImpl(cdpCall, webSocketDebuggerUrl, fp, profile = {}) {
   if (fp?.native === true || isNativeFingerprintProfile(profile)) return { native: true, skipped: true };
   const privacy = profile.privacy || {};
   const timezone = privacy.timezoneMode === 'custom'
@@ -1853,6 +1891,7 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
     : privacy.timezoneMode === 'real'
       ? ''
       : (profile.exitTimezone || '');
+  if (isStrictPrivacy(profile) && !validTimezone(timezone)) throw protectionError('缺少有效出口时区');
   // Keep the native override and the generated fingerprint on the same valid
   // coordinates. Missing IP data must not become Number(null) === 0.
   const geoposition = profileGeoposition(profile);
@@ -1867,8 +1906,10 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
   };
 
   // Page domain must be enabled or addScriptToEvaluateOnNewDocument is a no-op on some hosts.
-  await invoke('Page.enable', {}).catch(() => {});
-  await invoke('Runtime.enable', {}).catch(() => {});
+  for (const method of ['Page.enable', 'Runtime.enable']) {
+    try { await invoke(method, {}); }
+    catch (error) { if (isStrictPrivacy(profile)) throw error; }
+  }
 
   // Soft overrides: CDP rejects a second setLocale/setTimezone with
   // "Another locale override is already in effect" — must not abort the whole inject.
@@ -1877,7 +1918,7 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
       await invoke(method, params);
     } catch (error) {
       const msg = String(error && error.message || error || '');
-      if (/already in effect|cannot be overridden|not available/i.test(msg)) return;
+      if (/already in effect/i.test(msg) || (!isStrictPrivacy(profile) && /cannot be overridden|not available/i.test(msg))) return;
       throw error;
     }
   };
@@ -1928,6 +1969,7 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
     documentStartOk = true;
   } catch (error) {
     const msg = String(error && error.message || error || '');
+    if (isStrictPrivacy(profile)) throw protectionError('无法注册文档开始指纹：' + msg, error);
     if (!/already|duplicate|exists/i.test(msg)) {
       // Retry once after re-enabling Page domain.
       await invoke('Page.enable', {}).catch(() => {});
@@ -1968,14 +2010,21 @@ async function applyFingerprintToTab(cdpCall, webSocketDebuggerUrl, fp, profile 
       err.softInject = true;
       err.exceptionDetails = evaluated.exceptionDetails;
       err.documentStartOk = documentStartOk;
+      if (isStrictPrivacy(profile)) throw err;
       // Soft path: swallow so keepDefaultTab can still open the welcome page.
     }
   } catch (error) {
+    if (isStrictPrivacy(profile)) throw error;
     const msg = String(error && error.message || error || '');
     if (!/Uncaught|already in effect|cannot be overridden/i.test(msg)) {
       // unexpected CDP transport errors still surface
       throw error;
     }
+  }
+  if (isStrictPrivacy(profile)) {
+    const check = await invoke('Runtime.evaluate', { expression: fingerprintVerificationExpression(fp, profile), returnByValue: true });
+    const failures = check?.result?.value;
+    if (check?.exceptionDetails || !Array.isArray(failures) || failures.length) throw protectionError('指纹读回不一致：' + (Array.isArray(failures) ? failures.join(', ') : '无法验证'));
   }
 }
 
@@ -1986,6 +2035,7 @@ module.exports = {
   buildWorkerInjectionScript,
   chromeArgsForFingerprint,
   applyFingerprintToTab,
+  fingerprintVerificationExpression,
   fingerprintConsistencyIssues,
   hashSeed,
   createMediaDevicesFromSeed,

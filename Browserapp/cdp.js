@@ -44,6 +44,7 @@ class PersistentConnection {
   constructor(webSocketUrl, options = {}) {
     this.webSocketUrl = webSocketUrl;
     this.onEvent = typeof options.onEvent === 'function' ? options.onEvent : null;
+    this.onDisconnect = typeof options.onDisconnect === 'function' ? options.onDisconnect : null;
     this.nextId = 1;
     this.pending = new Map();
     this.socket = options.socket || null;
@@ -62,11 +63,11 @@ class PersistentConnection {
       socket.addEventListener('error', () => {
         clearTimeout(timer);
         if (!opened) reject(new Error('CDP persistent socket error'));
-        if (!this.closed) this.failAll(new Error('CDP persistent socket error'));
+        if (!this.closed) this.disconnected(new Error('CDP persistent socket error'));
       });
       socket.addEventListener('close', () => {
         if (!opened) { clearTimeout(timer); reject(new Error('CDP persistent socket closed')); }
-        if (!this.closed) this.failAll(new Error('CDP persistent socket closed'));
+        if (!this.closed) this.disconnected(new Error('CDP persistent socket closed'));
       });
     });
     return this;
@@ -120,6 +121,15 @@ class PersistentConnection {
     this.failAll(new Error('CDP persistent connection closed'));
     try { this.socket?.close(); } catch (_) {}
     this.socket = null;
+  }
+
+  disconnected(error) {
+    if (this.closed) return;
+    this.failAll(error);
+    this.closed = true;
+    try { this.socket?.close(); } catch (_) {}
+    this.socket = null;
+    try { this.onDisconnect?.(error); } catch (_) {}
   }
 }
 
