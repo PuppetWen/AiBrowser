@@ -50,7 +50,7 @@ function Assert-Source {
   if ($changes) { throw 'Tracked product source changed during CI' }
 }
 function Assert-Draft {
-  $release = (Get-CheckedOutput 'gh' @('api', ('repos/' + $repository + '/releases/tags/' + $ReleaseTag))) | ConvertFrom-Json
+  $release = (Get-CheckedOutput 'gh' @('api', ('repos/' + $repository + '/releases/402323423'))) | ConvertFrom-Json
   if (-not $release.draft -or $release.id -ne 402323423 -or $release.tag_name -cne $allowedTag -or $release.target_commitish -cne $allowedCommit) { throw 'Target must remain the exact existing v1.0.9 draft and source commit; published or unrelated releases are never changed' }
   return $release
 }
