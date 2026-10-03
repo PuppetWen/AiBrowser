@@ -1,0 +1,71 @@
+name: Build Windows release draft
+run-name: Build ${{ inputs.release_tag }} from ${{ inputs.source_commit }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Controlled draft release tag
+        required: true
+        default: v1.0.9
+        type: string
+      source_commit:
+        description: Full product source commit (must match the release tag)
+        required: true
+        default: 721844ce9ad479ccf4fb29820df74583b5b63265
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-draft-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  windows-release:
+    if: github.repository == 'PuppetWen/AiBrowser'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+    steps:
+      - name: Validate controlled release inputs
+        run: |
+          if ($env:RELEASE_TAG -cne 'v1.0.9') { throw 'Only the controlled v1.0.9 draft is allowed' }
+          if ($env:SOURCE_COMMIT -cne '721844ce9ad479ccf4fb29820df74583b5b63265') { throw 'Unexpected product source commit' }
+
+      - name: Checkout CI tools at the workflow commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          path: ci-tools
+          persist-credentials: false
+
+      - name: Checkout fixed product source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify bootstrap and dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & "$env:GITHUB_WORKSPACE/ci-tools/scripts/windows-ci-bootstrap.ps1" -Phase Bootstrap -ProjectRoot "$env:GITHUB_WORKSPACE/source" -ReleaseTag $env:RELEASE_TAG -SourceCommit $env:SOURCE_COMMIT
+
+      - name: Build and statically verify all Windows packages
+        run: |
+          & "$env:GITHUB_WORKSPACE/ci-tools/scripts/windows-ci-bootstrap.ps1" -Phase Build -ProjectRoot "$env:GITHUB_WORKSPACE/source" -ReleaseTag $env:RELEASE_TAG -SourceCommit $env:SOURCE_COMMIT
+
+      - name: Upload verified files to the controlled draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & "$env:GITHUB_WORKSPACE/ci-tools/scripts/windows-ci-bootstrap.ps1" -Phase Upload -ProjectRoot "$env:GITHUB_WORKSPACE/source" -ReleaseTag $env:RELEASE_TAG -SourceCommit $env:SOURCE_COMMIT
